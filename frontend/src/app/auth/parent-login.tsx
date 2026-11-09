@@ -67,6 +67,7 @@ export default function ParentLoginScreen() {
                 <ScrollView
                     contentContainerStyle={styles.content}
                     showsVerticalScrollIndicator={false}
+                    keyboardShouldPersistTaps="handled"
                 >
                     <View style={styles.brandRow}>
                         <View style={styles.logo}>
@@ -172,15 +173,19 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 12,
-        marginBottom: 44,
+        marginBottom: 30,
     },
     logo: {
-        width: 48,
-        height: 48,
-        borderRadius: 16,
+        width: 52,
+        height: 52,
+        borderRadius: 18,
         backgroundColor: colors.primary,
         alignItems: 'center',
         justifyContent: 'center',
+        shadowColor: '#A43E17',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.18,
+        shadowRadius: 18,
     },
     logoLetter: {
         color: colors.surface,
@@ -189,12 +194,12 @@ const styles = StyleSheet.create({
     },
     brandName: {
         color: colors.primary,
-        fontSize: 23,
+        fontSize: 22,
         fontWeight: '800',
         letterSpacing: -0.6,
     },
     intro: {
-        marginBottom: 28,
+        marginBottom: 24,
     },
     eyebrow: {
         color: colors.primary,
@@ -218,10 +223,14 @@ const styles = StyleSheet.create({
     },
     card: {
         backgroundColor: colors.surface,
-        borderRadius: 28,
+        borderRadius: 30,
         padding: 22,
         borderWidth: 1,
-        borderColor: '#FFF0E8',
+        borderColor: colors.border,
+        shadowColor: '#C57A5F',
+        shadowOffset: { width: 0, height: 14 },
+        shadowOpacity: 0.08,
+        shadowRadius: 20,
     },
     cardTitle: {
         color: colors.heading,
@@ -244,7 +253,7 @@ const styles = StyleSheet.create({
         minHeight: 54,
         borderWidth: 1,
         borderColor: colors.border,
-        borderRadius: 15,
+        borderRadius: 16,
         backgroundColor: '#FFFCFA',
         paddingHorizontal: 15,
         color: colors.heading,
@@ -274,6 +283,10 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         marginTop: 2,
+        shadowColor: '#A63E17',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.18,
+        shadowRadius: 16,
     },
     loginButtonText: {
         color: colors.surface,

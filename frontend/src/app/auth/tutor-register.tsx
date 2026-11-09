@@ -106,12 +106,15 @@ export default function RegisterScreen() {
     if (success) {
         return (
             <View style={styles.container}>
+                <View style={styles.successBackground} />
                 <View style={styles.successContainer}>
-                    <Text style={styles.successIcon}>✓</Text>
+                    <View style={styles.successBadge}>
+                        <Text style={styles.successIcon}>✓</Text>
+                    </View>
 
-                    <Text style={styles.title}>Registration Successful!</Text>
+                    <Text style={styles.successTitle}>Registration Successful!</Text>
 
-                    <Text style={styles.subtitle}>
+                    <Text style={styles.successSubtitle}>
                         Your account has been created successfully.
                         You can now continue to login using your new credentials.
                     </Text>
@@ -130,6 +133,8 @@ export default function RegisterScreen() {
     return (
         <SafeAreaView style={styles.safeArea}>
             <StatusBar style="dark" />
+            <View style={styles.screenGlow} />
+            <View style={styles.screenGlowBottom} />
 
             <KeyboardAvoidingView
                 style={styles.flex}
@@ -151,7 +156,10 @@ export default function RegisterScreen() {
                         <View style={styles.logo}>
                             <Text style={styles.logoLetter}>NT</Text>
                         </View>
-                        <Text style={styles.brandName}>Next Tutor</Text>
+                        <View>
+                            <Text style={styles.brandName}>Next Tutor</Text>
+                            <Text style={styles.brandSubtext}>Trusted local teaching support</Text>
+                        </View>
                     </View>
 
                     <View style={styles.intro}>
@@ -164,7 +172,10 @@ export default function RegisterScreen() {
                     </View>
 
                     <View style={styles.card}>
-                        <Text style={styles.cardTitle}>Personal information</Text>
+                        <View style={styles.sectionHeaderRow}>
+                            <Text style={styles.sectionNumber}>01</Text>
+                            <Text style={styles.cardTitle}>Personal information</Text>
+                        </View>
                         <Text style={styles.cardSubtitle}>
                             Tell us a little about yourself.
                         </Text>
@@ -234,7 +245,10 @@ export default function RegisterScreen() {
 
                         <View style={styles.sectionDivider} />
 
-                        <Text style={styles.cardTitle}>Education background</Text>
+                        <View style={styles.sectionHeaderRow}>
+                            <Text style={styles.sectionNumber}>02</Text>
+                            <Text style={styles.cardTitle}>Education background</Text>
+                        </View>
                         <Text style={styles.cardSubtitle}>
                             Select your current education status.
                         </Text>
@@ -261,7 +275,10 @@ export default function RegisterScreen() {
 
                         <View style={styles.sectionDivider} />
 
-                        <Text style={styles.cardTitle}>Secure your account</Text>
+                        <View style={styles.sectionHeaderRow}>
+                            <Text style={styles.sectionNumber}>03</Text>
+                            <Text style={styles.cardTitle}>Secure your account</Text>
+                        </View>
                         <Text style={styles.cardSubtitle}>
                             Create a password you haven&apos;t used elsewhere.
                         </Text>
@@ -402,46 +419,66 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: colors.background,
     },
+    successBackground: {
+        position: 'absolute',
+        inset: 0,
+        backgroundColor: '#FFF1EA',
+        opacity: 0.9,
+    },
     successContainer: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        padding: 24,
+        padding: 28,
+        zIndex: 1,
+    },
+    successBadge: {
+        width: 90,
+        height: 90,
+        borderRadius: 28,
+        backgroundColor: '#EAF8F0',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 20,
+        borderWidth: 1,
+        borderColor: '#C8EEDB',
     },
     successIcon: {
-        fontSize: 48,
+        fontSize: 42,
         color: '#2E9D61',
-        marginBottom: 20,
+        fontWeight: '800',
     },
-    title: {
-        fontSize: 26,
-        fontWeight: '700',
+    successTitle: {
+        fontSize: 28,
+        fontWeight: '800',
         color: colors.heading,
         textAlign: 'center',
         marginBottom: 12,
     },
-
-    subtitle: {
+    successSubtitle: {
         fontSize: 15,
         color: colors.text,
         textAlign: 'center',
         lineHeight: 23,
         marginBottom: 32,
     },
-
     button: {
         backgroundColor: colors.primary,
         paddingVertical: 16,
         paddingHorizontal: 28,
-        borderRadius: 12,
+        borderRadius: 16,
         width: '100%',
         alignItems: 'center',
+        shadowColor: '#B04A1E',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.18,
+        shadowRadius: 18,
+        elevation: 4,
     },
-
     buttonText: {
         color: '#FFFFFF',
         fontSize: 16,
-        fontWeight: '600',
+        fontWeight: '800',
     },
     safeArea: {
         flex: 1,
@@ -449,6 +486,26 @@ const styles = StyleSheet.create({
     },
     flex: {
         flex: 1,
+    },
+    screenGlow: {
+        position: 'absolute',
+        top: -120,
+        left: -80,
+        width: 260,
+        height: 260,
+        borderRadius: 130,
+        backgroundColor: '#FDE3D3',
+        opacity: 0.7,
+    },
+    screenGlowBottom: {
+        position: 'absolute',
+        bottom: -120,
+        right: -80,
+        width: 280,
+        height: 280,
+        borderRadius: 140,
+        backgroundColor: '#F9D9C7',
+        opacity: 0.75,
     },
     content: {
         flexGrow: 1,
@@ -458,7 +515,7 @@ const styles = StyleSheet.create({
     },
     backButton: {
         alignSelf: 'flex-start',
-        marginBottom: 28,
+        marginBottom: 20,
         paddingVertical: 6,
     },
     backText: {
@@ -470,15 +527,20 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 12,
-        marginBottom: 32,
+        marginBottom: 20,
     },
     logo: {
-        width: 46,
-        height: 46,
-        borderRadius: 15,
+        width: 52,
+        height: 52,
+        borderRadius: 18,
         backgroundColor: colors.primary,
         alignItems: 'center',
         justifyContent: 'center',
+        shadowColor: '#C8582D',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.24,
+        shadowRadius: 16,
+        elevation: 4,
     },
     logoLetter: {
         color: colors.surface,
@@ -490,8 +552,15 @@ const styles = StyleSheet.create({
         fontSize: 22,
         fontWeight: '800',
     },
+    brandSubtext: {
+        color: colors.muted,
+        fontSize: 11,
+        fontWeight: '700',
+        letterSpacing: 0.8,
+        textTransform: 'uppercase',
+    },
     intro: {
-        marginBottom: 25,
+        marginBottom: 18,
     },
     eyebrow: {
         color: colors.primary,
@@ -500,12 +569,43 @@ const styles = StyleSheet.create({
         letterSpacing: 1.5,
         marginBottom: 10,
     },
+    title: {
+        fontSize: 34,
+        lineHeight: 42,
+        fontWeight: '800',
+        color: colors.heading,
+        letterSpacing: -1,
+    },
+    subtitle: {
+        fontSize: 15,
+        color: colors.text,
+        textAlign: 'left',
+        lineHeight: 23,
+        marginTop: 10,
+    },
     card: {
         backgroundColor: colors.surface,
-        borderRadius: 26,
-        padding: 21,
+        borderRadius: 28,
+        padding: 22,
         borderWidth: 1,
         borderColor: '#FFF0E8',
+        shadowColor: '#C77B5F',
+        shadowOffset: { width: 0, height: 12 },
+        shadowOpacity: 0.08,
+        shadowRadius: 20,
+        elevation: 2,
+    },
+    sectionHeaderRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 4,
+    },
+    sectionNumber: {
+        fontSize: 12,
+        fontWeight: '800',
+        color: colors.primary,
+        letterSpacing: 1.6,
+        marginRight: 10,
     },
     cardTitle: {
         color: colors.heading,
@@ -526,10 +626,10 @@ const styles = StyleSheet.create({
         marginBottom: 9,
     },
     input: {
-        minHeight: 53,
+        minHeight: 54,
         borderWidth: 1,
         borderColor: colors.border,
-        borderRadius: 14,
+        borderRadius: 16,
         backgroundColor: '#FFFCFA',
         paddingHorizontal: 14,
         color: colors.heading,
@@ -542,13 +642,13 @@ const styles = StyleSheet.create({
         marginBottom: 10,
     },
     optionButton: {
-        minHeight: 54,
+        minHeight: 58,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        borderWidth: 1,
+        borderWidth: 1.5,
         borderColor: colors.border,
-        borderRadius: 14,
+        borderRadius: 16,
         paddingHorizontal: 14,
         paddingVertical: 12,
         marginBottom: 10,
@@ -558,6 +658,11 @@ const styles = StyleSheet.create({
     optionSelected: {
         borderColor: colors.primary,
         backgroundColor: colors.softOrange,
+        shadowColor: '#E1A785',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.15,
+        shadowRadius: 12,
+        elevation: 2,
     },
     optionContent: {
         flex: 1,
@@ -601,12 +706,12 @@ const styles = StyleSheet.create({
         marginVertical: 24,
     },
     passwordContainer: {
-        minHeight: 53,
+        minHeight: 54,
         flexDirection: 'row',
         alignItems: 'center',
         borderWidth: 1,
         borderColor: colors.border,
-        borderRadius: 14,
+        borderRadius: 16,
         backgroundColor: '#FFFCFA',
         paddingHorizontal: 14,
         marginBottom: 20,
@@ -636,6 +741,11 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         marginTop: 8,
+        shadowColor: '#A73D16',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.18,
+        shadowRadius: 18,
+        elevation: 4,
     },
     submitButtonText: {
         color: colors.surface,
