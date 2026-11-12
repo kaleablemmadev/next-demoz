@@ -13,6 +13,8 @@ type RegistrationErrorCode =
     | 'ACCOUNT_CONFLICT'
     | 'AUTHENTICATION_FAILED';
 
+const DUMMY_HASH = await hashPassword("dummy-password-not-used");
+
 export class RegistrationError extends Error {
     constructor(
         public readonly code: RegistrationErrorCode,
@@ -38,12 +40,6 @@ export const registerTutor = async (userData: unknown) => {
     const input = result.data;
 
     try {
-        console.log('Checking database connection...');
-
-        await prisma.$connect();
-
-        console.log('Database connection successful. Creating tutor...');
-
         const hashedPassword = await hashPassword(input.password);
 
         const tutor = await prisma.user.create({
@@ -82,27 +78,9 @@ export const registerTutor = async (userData: unknown) => {
             error instanceof Prisma.PrismaClientKnownRequestError &&
             error.code === 'P2002'
         ) {
-            const target = error.meta?.target;
-
-            const fields = Array.isArray(target)
-                ? target.map(String)
-                : typeof target === 'string'
-                    ? target.split(',').map(field => field.trim())
-                    : [];
-
-            const messages: Record<string, string> = {
-                username: 'This username is already taken.',
-                email: 'This email address is already registered.',
-                phoneNumber: 'This phone number is already registered.',
-            };
-
-            const conflictingField = fields.find(field => field in messages);
-
             throw new RegistrationError(
                 'ACCOUNT_CONFLICT',
-                conflictingField
-                    ? messages[conflictingField] ?? 'An account already exists with one of these details.'
-                    : 'An account already exists with one of these details.'
+                'We could not create an account with these details. If you already have one, sign in instead.'
             );
         }
 
@@ -110,7 +88,7 @@ export const registerTutor = async (userData: unknown) => {
     }
 };
 
-export const loginTutor = async (userData: unknown) => {
+export const loginTutor = async (userData: unknown, expectedRole: string = Role.TUTOR) => {
     const result = loginSchema.safeParse(userData);
 
     if (!result.success) {
@@ -133,13 +111,9 @@ export const loginTutor = async (userData: unknown) => {
         }
     })
 
-    if (!user) { 
-        throw new RegistrationError('AUTHENTICATION_FAILED', 'Invalid username or password');
-    }
+    const passwordMatches = user ? await comparePasswords(password, user.passwordHash) : await comparePasswords(password, DUMMY_HASH);
 
-    const passwordMatches = await comparePasswords(password, user.passwordHash);
-
-    if (!passwordMatches) {
+    if (!passwordMatches || !user || user.role !== expectedRole) {
         throw new RegistrationError('AUTHENTICATION_FAILED', 'Invalid username or password');
     }
 

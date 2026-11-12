@@ -1,4 +1,4 @@
-import { hashPassword, comparePasswords } from './security.js'
+import { hashPassword, comparePasswords } from '../src/utils/security.js'
 
 const password = "KaleabDev@625";
 const hashedPassword = await hashPassword(password);

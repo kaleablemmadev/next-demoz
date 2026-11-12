@@ -27,7 +27,7 @@ export const registerParentWithStudents = async (parentData: unknown) => {
                 data: {
                     username: input.username,
                     phoneNumber: input.phoneNumber,
-                    email: input.email?.trim() ?? null,
+                    email: input.email?.trim() || null,
                     passwordHash: hashedPassword,
                     role: Role.PARENT,
                     fullName: input.fullName,

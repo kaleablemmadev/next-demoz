@@ -1,7 +1,7 @@
 // services/test.auth.service.ts
 
-import { loginTutor, registerTutor } from "./auth.service.js";
-import type { RegisterTutorInput, LoginTutorInput } from "../schemas/auth.schema.js";
+import { loginTutor, registerTutor } from "../src/services/auth.service.js";
+import type { RegisterTutorInput, LoginTutorInput } from "../src/schemas/auth.schema.js";
 
 const successfulRegisterInputA: RegisterTutorInput = {
     userName: 'promiselemma',

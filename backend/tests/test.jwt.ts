@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import { signAccessToken } from './jwt.js';
+import { signAccessToken } from '../src/utils/jwt.js';
 
 const token = signAccessToken({
     sub: 'test-user-123',

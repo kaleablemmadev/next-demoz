@@ -14,6 +14,7 @@ export type RegisterTutorInput = {
 
 export type RegisterParentInput = {
     username: string;
+    fullName: string;
     phoneNumber: string;
     password: string;
     email?: string;
@@ -44,16 +45,26 @@ type RegisterParentResponse = {
         id: string;
         fullName: string;
         username: string;
-        email: string;
+        email: string | null;
         phoneNumber: string;
         role: string;
     };
 };
 
+export type WeakSubjectInput = {
+    subjectId: string;
+    gradeId: string;
+};
+
 export type StudentInput = {
     fullName: string;
     gradeId: string;
+    preferredGender?: 'MALE' | 'FEMALE';
+    preferredMinAge?: number;
+    preferredMaxAge?: number;
+    requireCertification?: boolean;
     additionalNotes?: string;
+    weakSubjects?: WeakSubjectInput[];
 };
 
 export async function registerTutor(

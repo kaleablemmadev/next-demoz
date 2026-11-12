@@ -1,11 +1,8 @@
 // src/controllers/auth.controller.ts
-import type { Request, Response } from 'express';
-import {
-    registerTutor,
-    loginTutor,
-    RegistrationError,
-} from '../services/auth.service.js';
-import { refreshAccessToken, revokeRefreshToken } from '../services/refresh-token.service.js';
+import type {Request, Response} from 'express';
+import {loginTutor, registerTutor, RegistrationError,} from '../services/auth.service.js';
+import {refreshAccessToken, revokeRefreshToken} from '../services/refresh-token.service.js';
+import {Role} from "../constants/constantEnums.js";
 
 export const register = async (req: Request, res: Response) => {
     try {
@@ -43,8 +40,9 @@ export const login = async (req: Request, res: Response) => {
     try {
         // 1. Extract expectedRole alongside login credentials
         const { expectedRole, ...loginCredentials } = req.body;
+        const portalRole = expectedRole === 'PARENT' ? Role.PARENT : Role.TUTOR;
 
-        const result = await loginTutor(loginCredentials);
+        const result = await loginTutor(loginCredentials, portalRole);
 
         // 2. Strict Role Boundary Check
         // If an expectedRole was provided by the frontend, verify it matches the user's database role

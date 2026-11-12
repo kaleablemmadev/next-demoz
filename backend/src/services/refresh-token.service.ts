@@ -4,7 +4,6 @@ import {
     generateRefreshToken, hashRefreshToken, getRefreshTokenExpiry
 } from '../utils/refresh-token.js';
 import { signAccessToken } from '../utils/jwt.js';
-import { RegistrationError } from './auth.service.js';
 
 export async function createRefreshToken(userId: string) {
     const token = generateRefreshToken();
