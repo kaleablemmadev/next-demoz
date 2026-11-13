@@ -15,6 +15,7 @@ import { registerSettingsHandlers } from './settings.js';
 import { registerGenderHandlers } from './gender.js';
 import { registerMenuHandlers } from './menu.js';
 import {registerAdminHandlers} from "./admin";
+import { registerSignupHandlers } from './signup.js';
 import { registerRoleHandlers } from './roles.js';
 import { registerLeaveHandlers } from './leave.js';
 import { registerSearchHandlers } from './search.js';
@@ -80,6 +81,7 @@ bot.callbackQuery(/^area:(.+)$/, async (ctx) => {
 bot.on('callback_query:data', (ctx, next) => { console.log('Button pressed:', ctx.callbackQuery.data); return next(); });
 
 registerAdminHandlers(bot);
+registerSignupHandlers(bot);
 registerSubjectHandlers(bot);
 registerGradeHandlers(bot);
 registerSalaryHandlers(bot);

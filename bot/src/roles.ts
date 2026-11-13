@@ -1,6 +1,7 @@
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
 import { isAdmin, showAdminMenu } from './admin.js';
+import { startBusinessSignup } from './signup.js';
 
 // Commands tutors see. This is the default list for every chat.
 export const TUTOR_COMMANDS = [
@@ -23,8 +24,6 @@ export const AGENCY_COMMANDS = [
     { command: 'feedback', description: 'Send feedback to NextTutor' },
     { command: 'leave', description: 'Request to leave NextTutor' },
 ];
-
-const CONTACT_USERNAME = process.env.REGISTER_CONTACT_USERNAME ?? 'admin_username';
 
 export const AGENCY_HELP =
     'NextTutor agency functions\n\n' +
@@ -102,16 +101,7 @@ export function registerRoleHandlers(
             return showAgencyMenu(ctx);
         }
 
-        if (!ctx.from.username) {
-            return ctx.editMessageText(
-                'Your Telegram account has no username yet. Set one in Telegram settings, then send /start again.'
-            );
-        }
-
-        await ctx.editMessageText(
-            'Your tutoring business is not registered yet.\n\n' +
-            `To register, contact us on Telegram: @${CONTACT_USERNAME}\n\n` +
-            'After you are registered, send /start again.'
-        );
+        await ctx.editMessageText('Registering your tutoring business.');
+        return startBusinessSignup(ctx);
     });
 }

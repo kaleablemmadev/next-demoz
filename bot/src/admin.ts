@@ -19,6 +19,7 @@ const FIELDS: Record<string, string> = {
 export const ADMIN_COMMANDS = [
     { command: 'start', description: 'Open the admin menu' },
     { command: 'admin', description: 'Show the admin menu' },
+    { command: 'signups', description: 'Businesses waiting for approval' },
     { command: 'agencies', description: 'List tutoring businesses' },
     { command: 'addagency', description: 'Add a tutoring business' },
     { command: 'showagency', description: 'Show one business' },
@@ -37,6 +38,7 @@ export const ADMIN_HELP = [
     'NextTutor admin functions',
     '',
     '/agencies - list tutoring businesses',
+    '/signups - businesses waiting for approval',
     '/addagency username Business name - add a business',
     '/showagency username - show one business',
     '/editagency username field value - change a field. Fields: name, header, footer, group, channel, destination (GROUP, CHANNEL or BOTH). Use "none" to clear a field.',
