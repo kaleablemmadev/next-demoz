@@ -97,6 +97,7 @@ async function offerCount(orgId: string): Promise<number> {
     return rows[0].n;
 }
 
+console.log('Showing agencies');
 async function listAgencies(ctx: Context) {
     const { rows } = await pool.query(`
         SELECT o.name, o."telegramUsername",
@@ -121,6 +122,7 @@ async function listAgencies(ctx: Context) {
     return ctx.reply(lines.join('\n\n'));
 }
 
+console.log('Showing agencies');
 async function showStats(ctx: Context) {
     const { rows } = await pool.query(`
         SELECT (SELECT count(*)::int FROM "TelegramSubscriber") AS tutors,
@@ -308,7 +310,7 @@ export function registerAdminHandlers(bot: Bot) {
     bot.callbackQuery(
         /^adm:delete:(.+)$/,
         adminCallback(async (ctx) => {
-            const id = ctx.match[1];
+            const id = (ctx.match as RegExpMatchArray)[1];
 
             const { rows } = await pool.query(`SELECT name FROM "Organization" WHERE id = $1`, [id]);
             if (rows.length === 0) {
