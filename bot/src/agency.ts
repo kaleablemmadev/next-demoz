@@ -52,19 +52,25 @@ async function findAgency(username: string | undefined) {
     return rows[0] ?? null;
 }
 
-// Monthly estimate for an hourly rate.
+// Rounds a number to the nearest step, for example nearest 50 or nearest 5.
+function roundTo(value: number, step: number): number {
+    return Math.round(value / step) * step;
+}
+
+// Monthly estimate for an hourly rate, rounded to the nearest 50.
 function monthlyOf(d: Draft): number {
     if (d.unit === 'HOUR') {
-        return Math.round((d.amount ?? 0) * (d.sessionHours ?? 0) * (d.sessionsPerWeek ?? 0) * WEEKS_PER_MONTH);
+        const raw = (d.amount ?? 0) * (d.sessionHours ?? 0) * (d.sessionsPerWeek ?? 0) * WEEKS_PER_MONTH;
+        return roundTo(raw, 50);
     }
     return d.amount ?? 0;
 }
 
-// Hourly estimate for a monthly salary.
+// Hourly estimate for a monthly salary, rounded to the nearest 5.
 function hourlyOf(d: Draft): number {
     if (d.unit === 'MONTH') {
         const hoursPerMonth = (d.sessionHours ?? 0) * (d.sessionsPerWeek ?? 0) * WEEKS_PER_MONTH;
-        return hoursPerMonth > 0 ? Math.round((d.amount ?? 0) / hoursPerMonth) : 0;
+        return hoursPerMonth > 0 ? roundTo((d.amount ?? 0) / hoursPerMonth, 5) : 0;
     }
     return d.amount ?? 0;
 }

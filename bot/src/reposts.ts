@@ -55,12 +55,17 @@ function listLabel(items: string[], all: string[], allLabel: string): string {
     return items.join(', ');
 }
 
+// Rounds a number to the nearest step, for example nearest 50 or nearest 5.
+function roundTo(value: number, step: number): number {
+    return Math.round(value / step) * step;
+}
+
 function payLine(o: PostOffer): string {
     if (o.salaryUnit === 'HOUR') {
         return `${o.salaryAmountEtb.toLocaleString()} ETB per hour (about ${o.monthlySalaryEtb.toLocaleString()} ETB per month)`;
     }
     const hoursPerMonth = (o.sessionHours ?? 0) * o.sessionsPerWeek * WEEKS_PER_MONTH;
-    const perHour = hoursPerMonth > 0 ? Math.round(o.salaryAmountEtb / hoursPerMonth) : 0;
+    const perHour = hoursPerMonth > 0 ? roundTo(o.salaryAmountEtb / hoursPerMonth, 5) : 0;
     return `${o.salaryAmountEtb.toLocaleString()} ETB per month (about ${perHour.toLocaleString()} ETB per hour)`;
 }
 
