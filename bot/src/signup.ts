@@ -1,5 +1,6 @@
-import { Bot, InlineKeyboard, type Context } from 'grammy';
+import { Bot, InlineKeyboard, type Context, type Api } from 'grammy';
 import { randomInt, randomUUID } from 'node:crypto';
+import { offerCardText, type CardOffer } from './card.js';
 import { pool } from './db.js';
 import { isAdmin, ADMIN_USERNAME } from './admin.js';
 
@@ -153,6 +154,69 @@ async function notifyAdmin(ctx: Context, text: string, keyboard?: InlineKeyboard
     }
 }
 
+// A sample offer, so the business can see where its header and footer go.
+async function showSample(api: Api, chatId: number, username: string, header: string | null, footer: string | null) {
+    const sample: CardOffer = {
+        title: 'Sample offer',
+        subjects: ['Mathematics', 'Physics'],
+        gradeLevels: ['Grade 8'],
+        subCity: 'Bole',
+        locationDetail: null,
+        sessionsPerWeek: 3,
+        sessionHours: 2,
+        salaryUnit: 'MONTH',
+        salaryAmountEtb: 2500,
+        monthlySalaryEtb: 2500,
+        preferredTutorGender: null,
+        requirements: null,
+        postHeader: header,
+        postFooter: footer,
+        agencyUsername: username,
+    };
+    return api.sendMessage(chatId, offerCardText(sample));
+}
+
+// Asks for the header ("above") or footer ("below") text.
+async function askTemplate(
+    api: Api,
+    chatId: number,
+    step: 'HEADER' | 'FOOTER',
+    username: string,
+    header: string | null
+) {
+    if (step === 'HEADER') {
+        await showSample(api, chatId, username, null, null);
+        return api.sendMessage(
+            chatId,
+            'Here is how your offers will look. Paste the text to show ABOVE every offer, or tap Skip.',
+            { reply_markup: new InlineKeyboard().text('Skip', 'tpl:skip:HEADER') }
+        );
+    }
+    await showSample(api, chatId, username, header, null);
+    return api.sendMessage(
+        chatId,
+        'Now paste the text to show BELOW every offer, or tap Skip.',
+        { reply_markup: new InlineKeyboard().text('Skip', 'tpl:skip:FOOTER') }
+    );
+}
+
+// Ends the template setup and shows the final sample.
+async function finishTemplate(api: Api, telegramId: number) {
+    const { rows } = await pool.query(
+        `SELECT "telegramUsername", "postHeader", "postFooter" FROM "Organization" WHERE "telegramUserId" = $1`,
+        [telegramId]
+    );
+    const org = rows[0];
+    if (org) {
+        await showSample(api, telegramId, org.telegramUsername, org.postHeader, org.postFooter);
+    }
+    return api.sendMessage(
+        telegramId,
+        'Your offer template is saved. Every offer you post will look like the sample above.\n\n' +
+        'Send /new to post your first offer. Send /help to see all functions.'
+    );
+}
+
 function approvalButtons(orgId: string) {
     return new InlineKeyboard()
         .text('Approve', `signup:approve:${orgId}`)
@@ -213,7 +277,13 @@ function adminCallback(handler: (ctx: Context) => Promise<unknown>) {
 }
 
 // Saves the business, sends it to the admin for approval, and clears the registration.
-async function finishSignup(ctx: Context, s: Signup, chats: ChatRow[], paymentRef: string) {
+// Saves the business, forwards the payment proof to the admin, and clears the registration.
+async function finishSignup(
+    ctx: Context,
+    s: Signup,
+    chats: ChatRow[],
+    proof: { kind: 'photo' | 'document'; fileId: string; messageId: number }
+) {
     const group = chats.find((c) => c.kind === 'GROUP');
     const channel = chats.find((c) => c.kind === 'CHANNEL');
     const orgId = randomUUID();
@@ -229,7 +299,7 @@ async function finishSignup(ctx: Context, s: Signup, chats: ChatRow[], paymentRe
             s.telegramUsername,
             Number(s.telegramId),
             s.ownerUsername,
-            paymentRef,
+            `${proof.kind}:${proof.fileId}`,
             group?.chatId ?? null,
             channel?.chatId ?? null,
             s.destination,
@@ -237,6 +307,15 @@ async function finishSignup(ctx: Context, s: Signup, chats: ChatRow[], paymentRe
     );
     await pool.query(`DELETE FROM "SignupChat" WHERE "telegramId" = $1`, [s.telegramId]);
     await pool.query(`DELETE FROM "BusinessSignup" WHERE "telegramId" = $1`, [s.telegramId]);
+
+    // Forward the payment proof first, so it sits above the request.
+    if (ADMIN_TELEGRAM_ID) {
+        try {
+            await ctx.api.forwardMessage(ADMIN_TELEGRAM_ID, ctx.chat!.id, proof.messageId);
+        } catch (err) {
+            console.error('Could not forward the payment proof to the admin:', err);
+        }
+    }
 
     const chatLines = chats.map((c) => `${c.kind === 'GROUP' ? 'Group' : 'Channel'}: @${c.username}`);
     await notifyAdmin(
@@ -246,11 +325,11 @@ async function finishSignup(ctx: Context, s: Signup, chats: ChatRow[], paymentRe
         `Business account: @${s.telegramUsername}\n` +
         `Owner: @${s.ownerUsername}\n` +
         chatLines.join('\n') +
-        `\nPayment reference: ${paymentRef}`,
+        '\n\nThe payment proof is above.',
         approvalButtons(orgId)
     );
 
-    return ctx.reply('Thank you. Your registration is with the admin. You will get a message when it is approved.');
+    return ctx.reply('Thank you. Your payment proof was sent to the admin. You will get a message when your business is approved.');
 }
 
 export function registerSignupHandlers(bot: Bot) {
@@ -262,11 +341,13 @@ export function registerSignupHandlers(bot: Bot) {
                  FROM "Organization" WHERE status = 'PENDING_APPROVAL' ORDER BY name`
             );
             if (rows.length === 0) return ctx.reply('No businesses waiting for approval.');
+
             for (const r of rows) {
-                await ctx.reply(
-                    `${r.name} (@${r.telegramUsername})\nPayment reference: ${r.paymentReference ?? 'none'}`,
-                    { reply_markup: approvalButtons(r.id) }
-                );
+                await ctx.reply(`${r.name} (@${r.telegramUsername})`, { reply_markup: approvalButtons(r.id) });
+                const [kind, ...rest] = String(r.paymentReference ?? '').split(':');
+                const fileId = rest.join(':');
+                if (kind === 'photo' && fileId) await ctx.replyWithPhoto(fileId);
+                if (kind === 'document' && fileId) await ctx.replyWithDocument(fileId);
             }
         })
     );
@@ -352,9 +433,9 @@ export function registerSignupHandlers(bot: Bot) {
         adminCallback(async (ctx) => {
             const orgId = (ctx.match as RegExpMatchArray)[1];
             const { rows } = await pool.query(
-                `UPDATE "Organization" SET status = 'ACTIVE'
+                `UPDATE "Organization" SET status = 'ACTIVE', "templateStep" = 'HEADER'
                  WHERE id = $1 AND status = 'PENDING_APPROVAL'
-                 RETURNING name, "telegramUsername", "telegramUserId"`,
+                     RETURNING name, "telegramUsername", "telegramUserId"`,
                 [orgId]
             );
             if (rows.length === 0) {
@@ -364,18 +445,10 @@ export function registerSignupHandlers(bot: Bot) {
 
             const b = rows[0];
             if (b.telegramUserId) {
+                const chatId = Number(b.telegramUserId);
                 try {
-                    await ctx.api.sendMessage(
-                        Number(b.telegramUserId),
-                        'Your business is approved. Welcome to NextTutor!\n\n' +
-                        'Your agency menu:\n' +
-                        '/new - post a new tutoring offer\n' +
-                        '/menu - show the agency menu\n' +
-                        '/leave - request to leave NextTutor\n' +
-                        '/feedback - send feedback\n' +
-                        '/help - list all functions\n\n' +
-                        'Send /start to show the buttons in your chat.'
-                    );
+                    await ctx.api.sendMessage(chatId, 'Your business is approved. Welcome to NextTutor! Let us set up how your offers look.');
+                    await askTemplate(ctx.api, chatId, 'HEADER', b.telegramUsername, null);
                 } catch (err) {
                     console.error('Could not tell the business it was approved:', err);
                 }
@@ -418,10 +491,80 @@ export function registerSignupHandlers(bot: Bot) {
         })
     );
 
+    // The payment proof: a screenshot or a PDF.
+    bot.on(['message:photo', 'message:document'], async (ctx, next) => {
+        const s = await getSignup(ctx.from.id);
+        if (!s || s.step !== 'PAYMENT_REF') return next();
+
+        let proof: { kind: 'photo' | 'document'; fileId: string; messageId: number };
+        if (ctx.message.photo) {
+            const largest = ctx.message.photo[ctx.message.photo.length - 1];
+            proof = { kind: 'photo', fileId: largest.file_id, messageId: ctx.message.message_id };
+        } else {
+            const doc = ctx.message.document!;
+            const isPdf = doc.mime_type === 'application/pdf';
+            const isImage = doc.mime_type?.startsWith('image/') ?? false;
+            if (!isPdf && !isImage) {
+                return ctx.reply('Please send a screenshot (image) or a PDF file.');
+            }
+            proof = { kind: 'document', fileId: doc.file_id, messageId: ctx.message.message_id };
+        }
+
+        const chats = await getChats(ctx.from.id);
+        return finishSignup(ctx, s, chats, proof);
+    });
+
+    // Skip the header or footer.
+    bot.callbackQuery(/^tpl:skip:(HEADER|FOOTER)$/, async (ctx) => {
+        const step = ctx.match[1] as 'HEADER' | 'FOOTER';
+        await ctx.answerCallbackQuery();
+
+        const { rows } = await pool.query(
+            `SELECT id, "telegramUsername", "postHeader" FROM "Organization"
+             WHERE "telegramUserId" = $1 AND "templateStep" = $2`,
+            [ctx.from.id, step]
+        );
+        const org = rows[0];
+        if (!org) return;
+
+        if (step === 'HEADER') {
+            await pool.query(`UPDATE "Organization" SET "templateStep" = 'FOOTER' WHERE id = $1`, [org.id]);
+            return askTemplate(ctx.api, ctx.from.id, 'FOOTER', org.telegramUsername, org.postHeader);
+        }
+
+        await pool.query(`UPDATE "Organization" SET "templateStep" = NULL WHERE id = $1`, [org.id]);
+        return finishTemplate(ctx.api, ctx.from.id);
+    });
+
     // Typed answers, one step at a time.
     bot.on('message:text', async (ctx, next) => {
         const text = ctx.message.text.trim();
         if (text.startsWith('/')) return next();
+
+        // Template setup after approval: the header first, then the footer.
+        const { rows: tplRows } = await pool.query(
+            `SELECT id, "telegramUsername", "postHeader", "templateStep" FROM "Organization"
+             WHERE "telegramUserId" = $1 AND "templateStep" IS NOT NULL`,
+            [ctx.from.id]
+        );
+        const tpl = tplRows[0];
+        if (tpl) {
+            if (text.length > 500) return ctx.reply('Please keep it under 500 characters.');
+
+            if (tpl.templateStep === 'HEADER') {
+                await pool.query(
+                    `UPDATE "Organization" SET "postHeader" = $2, "templateStep" = 'FOOTER' WHERE id = $1`,
+                    [tpl.id, text]
+                );
+                return askTemplate(ctx.api, ctx.from.id, 'FOOTER', tpl.telegramUsername, text);
+            }
+
+            await pool.query(
+                `UPDATE "Organization" SET "postFooter" = $2, "templateStep" = NULL WHERE id = $1`,
+                [tpl.id, text]
+            );
+            return finishTemplate(ctx.api, ctx.from.id);
+        }
 
         const telegramId = ctx.from.id;
         const s = await getSignup(telegramId);
@@ -485,13 +628,11 @@ export function registerSignupHandlers(bot: Bot) {
                 await ctx.reply(ownerTemplate(s, updated));
                 return ctx.reply('Then reply here with your payment reference or transaction number.');
             }
-            return ctx.reply(`${label(match.kind)} confirmed. ${promptFor(stage, updated)}`);
+            return ctx.reply('Then send the payment screenshot or PDF here.');
         }
 
         if (s.step === 'PAYMENT_REF') {
-            if (text.length < 3) return ctx.reply('Please type the payment reference or transaction number.');
-            const chats = await getChats(telegramId);
-            return finishSignup(ctx, s, chats, text.slice(0, 200));
+            return ctx.reply('Please send the payment as a screenshot or a PDF file.');
         }
 
         return next();
