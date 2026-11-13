@@ -626,13 +626,13 @@ export function registerSignupHandlers(bot: Bot) {
             if (stage === 'PAYMENT_REF') {
                 await ctx.reply(`Ownership confirmed. Copy this message and send it to @${ADMIN_USERNAME} on Telegram:`);
                 await ctx.reply(ownerTemplate(s, updated));
-                return ctx.reply('Then reply here with your payment reference or transaction number.');
+                return ctx.reply('Then send the payment screenshot or PDF here.');
             }
-            return ctx.reply('Then send the payment screenshot or PDF here.');
+            return ctx.reply(`${label(match.kind)} confirmed. ${promptFor(stage, updated)}`);
         }
 
         if (s.step === 'PAYMENT_REF') {
-            return ctx.reply('Please send the payment as a screenshot or a PDF file.');
+            return ctx.reply('Please send a screenshot or a PDF.');
         }
 
         return next();
