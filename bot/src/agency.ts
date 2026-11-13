@@ -126,13 +126,17 @@ export function registerAgencyHandlers(bot: Bot) {
 
         await pool.query(
             `INSERT INTO "TutoringOffer"
-                ("organizationId", "title", "subject", "gradeLevel", "subCity", "monthlySalaryEtb", "sessionsPerWeek", "preferredTutorGender", "status")
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'OPEN')`,
+             ("organizationId", "title", "subject", "gradeLevel", "subjects", "gradeLevels",
+              "subCity", "monthlySalaryEtb", "salaryUnit", "salaryAmountEtb", "sessionsPerWeek",
+              "preferredTutorGender", "status")
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'MONTH', $8, $9, $10, 'OPEN')`,
             [
                 d.orgId,
                 `${d.subject} tutor (${d.gradeLevel})`,
                 d.subject,
                 d.gradeLevel,
+                [d.subject],
+                [d.gradeLevel],
                 d.subCity,
                 d.salary,
                 d.sessions,

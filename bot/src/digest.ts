@@ -74,7 +74,7 @@ export async function sendWeeklyDigest(bot: Bot, force = false): Promise<number>
         const lines = offers.slice(0, PREVIEW_LIMIT).map(
             (o, i) =>
                 `${i + 1}. ${o.title}\n` +
-                `   ${o.subject} · ${o.gradeLevel} · ${o.subCity}\n` +
+                `   ${o.subjects.join(', ')} · ${o.gradeLevels.join(' & ')} · ${o.subCity}\n` +
                 `   ${o.monthlySalaryEtb.toLocaleString()} ETB · @${o.agencyUsername}`
         );
 

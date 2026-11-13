@@ -1,12 +1,12 @@
-import { Bot, type Context } from 'grammy';
+import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
-import { areasNear } from '../../shared/rules/nearby-areas.js';
+import { tutorMatchesOffer } from '../../shared/rules/offer-match.js';
 
-type OpenOffer = {
+export type OpenOffer = {
     id: string;
     title: string;
-    subject: string;
-    gradeLevel: string;
+    subjects: string[];
+    gradeLevels: string[];
     subCity: string;
     monthlySalaryEtb: number;
     sessionsPerWeek: number;
@@ -14,7 +14,7 @@ type OpenOffer = {
     agencyUsername: string;
 };
 
-// Every open offer that matches this tutor's area, subjects, grades and salary minimum.
+// Every open offer this tutor fully matches: all subjects, all grades, area and salary.
 export async function findMatchingOffers(telegramId: number): Promise<OpenOffer[]> {
     const me = await pool.query(
         `SELECT "subCity", subjects, grades, "minSalaryEtb" FROM "TelegramSubscriber" WHERE "telegramId" = $1`,
@@ -24,28 +24,36 @@ export async function findMatchingOffers(telegramId: number): Promise<OpenOffer[
     if (!tutor || !tutor.subCity) return [];
 
     const { rows } = await pool.query(`
-        SELECT t.id, t.title, t.subject, t."gradeLevel", t."subCity", t."monthlySalaryEtb",
+        SELECT t.id, t.title, t.subjects, t."gradeLevels", t."subCity", t."monthlySalaryEtb",
                t."sessionsPerWeek", o.name AS "agencyName", o."telegramUsername" AS "agencyUsername"
         FROM "TutoringOffer" t
-        JOIN "Organization" o ON o.id = t."organizationId"
+                 JOIN "Organization" o ON o.id = t."organizationId"
         WHERE t.status = 'OPEN'
         ORDER BY t."postedAt" DESC
     `);
 
-    const areas = areasNear(tutor.subCity);
-    return rows.filter(
-        (o: OpenOffer) =>
-            areas.includes(o.subCity) &&
-            tutor.subjects.includes(o.subject) &&
-            tutor.grades.includes(o.gradeLevel) &&
-            (tutor.minSalaryEtb === null || o.monthlySalaryEtb >= tutor.minSalaryEtb)
+    return rows.filter((o: OpenOffer) =>
+        tutorMatchesOffer(
+            {
+                subCity: tutor.subCity,
+                subjects: tutor.subjects,
+                grades: tutor.grades,
+                minSalaryEtb: tutor.minSalaryEtb,
+            },
+            {
+                subCity: o.subCity,
+                subjects: o.subjects,
+                gradeLevels: o.gradeLevels,
+                monthlyEtb: o.monthlySalaryEtb,
+            }
+        )
     );
 }
 
 function offerText(o: OpenOffer): string {
     return [
         o.title,
-        `${o.subject} · ${o.gradeLevel} · ${o.subCity}`,
+        `${o.subjects.join(', ')} · ${o.gradeLevels.join(' & ')} · ${o.subCity}`,
         `${o.sessionsPerWeek} sessions a week`,
         `${o.monthlySalaryEtb.toLocaleString()} ETB / month`,
         '',
@@ -57,10 +65,10 @@ function offerText(o: OpenOffer): string {
 const SHOW_LIMIT = 10;
 
 export function registerOfferHandlers(bot: Bot) {
-    bot.callbackQuery('offers:show', async (ctx) => {
+    bot.callbackQuery('offers:show', async (ctx: Context) => {
         await ctx.answerCallbackQuery();
 
-        const offers = await findMatchingOffers(ctx.from.id);
+        const offers = await findMatchingOffers(ctx.from!.id);
 
         if (offers.length === 0) {
             return ctx.reply("No open offers match your setup yet. We'll message you when one does.");

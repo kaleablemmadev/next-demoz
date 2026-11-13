@@ -1,35 +1,30 @@
 import { Bot } from 'grammy';
 import { pool } from './db.js';
-import { sendOfferAlerts, type Agency } from './alerts.js';
-import type { Offer } from '../../shared/types/offer.js';
+import { sendOfferAlerts, type Agency, type AlertOffer } from './alerts.js';
 
 // Sends alerts for every open offer that hasn't been alerted yet.
-// Any source that adds an offer to TutoringOffer gets alerts this way.
 export async function sendPendingAlerts(bot: Bot): Promise<void> {
     const { rows } = await pool.query(`
-        SELECT t.id, t.title, t.subject, t."gradeLevel", t.city, t."subCity",
-               t."monthlySalaryEtb", t."sessionsPerWeek", t."postedAt", t."organizationId",
+        SELECT t.id, t.title, t.subjects, t."gradeLevels", t."subCity",
+               t."monthlySalaryEtb", t."sessionsPerWeek", t.status,
                o.name AS "agencyName", o."telegramUsername"
         FROM "TutoringOffer" t
-        JOIN "Organization" o ON o.id = t."organizationId"
+                 JOIN "Organization" o ON o.id = t."organizationId"
         WHERE t."alertedAt" IS NULL AND t.status = 'OPEN'
         ORDER BY t."postedAt" ASC
-        LIMIT 20
+            LIMIT 20
     `);
 
     for (const r of rows) {
-        const offer: Offer = {
+        const offer: AlertOffer = {
             id: r.id,
-            agencyId: r.organizationId,
             title: r.title,
-            subject: r.subject,
-            gradeLevel: r.gradeLevel,
-            city: r.city,
+            subjects: r.subjects,
+            gradeLevels: r.gradeLevels,
             subCity: r.subCity,
             monthlySalaryEtb: r.monthlySalaryEtb,
             sessionsPerWeek: r.sessionsPerWeek,
-            status: 'OPEN',
-            postedAt: new Date(r.postedAt).toISOString().slice(0, 10),
+            status: r.status,
         };
 
         const agency: Agency = {

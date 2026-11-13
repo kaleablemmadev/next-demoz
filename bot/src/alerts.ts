@@ -1,11 +1,21 @@
 import { Bot } from 'grammy';
 import { pool } from './db.js';
-import { areasNear } from '../../shared/rules/nearby-areas.js';
-import type { Offer } from '../../shared/types/offer.js';
+import { tutorMatchesOffer } from '../../shared/rules/offer-match.js';
 
 export type Agency = {
     name: string;
     telegramUsername: string;
+};
+
+export type AlertOffer = {
+    id: string;
+    title: string;
+    subjects: string[];
+    gradeLevels: string[];
+    subCity: string;
+    monthlySalaryEtb: number;
+    sessionsPerWeek: number;
+    status: 'OPEN' | 'CLOSED';
 };
 
 type Subscriber = {
@@ -34,22 +44,12 @@ async function alertableSubscribers(): Promise<Subscriber[]> {
     return rows;
 }
 
-// Nearby area, subject, grade, and the tutor's salary filter.
-function matches(sub: Subscriber, offer: Offer): boolean {
-    return (
-        areasNear(sub.subCity).includes(offer.subCity) &&
-        sub.subjects.includes(offer.subject) &&
-        sub.grades.includes(offer.gradeLevel) &&
-        (sub.minSalaryEtb === null || offer.monthlySalaryEtb >= sub.minSalaryEtb)
-    );
-}
-
-function alertText(offer: Offer, agency: Agency): string {
+function alertText(offer: AlertOffer, agency: Agency): string {
     return [
         'New tutoring offer',
         '',
         offer.title,
-        `${offer.subject} · ${offer.gradeLevel} · ${offer.subCity}`,
+        `${offer.subjects.join(', ')} · ${offer.gradeLevels.join(' & ')} · ${offer.subCity}`,
         `${offer.sessionsPerWeek} sessions a week`,
         `${offer.monthlySalaryEtb.toLocaleString()} ETB / month`,
         '',
@@ -58,19 +58,28 @@ function alertText(offer: Offer, agency: Agency): string {
     ].join('\n');
 }
 
-// Sends the offer to every matching subscriber who hasn't had it yet.
+// Sends the offer to every fully matching subscriber who hasn't had it yet.
 // Returns how many messages were sent.
-export async function sendOfferAlerts(bot: Bot, offer: Offer, agency: Agency): Promise<number> {
+export async function sendOfferAlerts(bot: Bot, offer: AlertOffer, agency: Agency): Promise<number> {
     if (offer.status !== 'OPEN') return 0;
 
     let sent = 0;
 
     for (const sub of await alertableSubscribers()) {
-        if (!matches(sub, offer)) continue;
+        const matches = tutorMatchesOffer(
+            { subCity: sub.subCity, subjects: sub.subjects, grades: sub.grades, minSalaryEtb: sub.minSalaryEtb },
+            {
+                subCity: offer.subCity,
+                subjects: offer.subjects,
+                gradeLevels: offer.gradeLevels,
+                monthlyEtb: offer.monthlySalaryEtb,
+            }
+        );
+        if (!matches) continue;
 
         const already = await pool.query(
             `SELECT 1 FROM "OfferDelivery" d
-                               JOIN "TelegramSubscriber" s ON s.id = d."subscriberId"
+             JOIN "TelegramSubscriber" s ON s.id = d."subscriberId"
              WHERE s."telegramId" = $1 AND d."offerId" = $2`,
             [sub.telegramId, offer.id]
         );
@@ -87,7 +96,7 @@ export async function sendOfferAlerts(bot: Bot, offer: Offer, agency: Agency): P
         await pool.query(
             `INSERT INTO "OfferDelivery" ("subscriberId", "offerId")
              SELECT id, $2 FROM "TelegramSubscriber" WHERE "telegramId" = $1
-                 ON CONFLICT DO NOTHING`,
+             ON CONFLICT DO NOTHING`,
             [sub.telegramId, offer.id]
         );
         sent++;
