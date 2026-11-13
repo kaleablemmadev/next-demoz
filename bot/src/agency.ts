@@ -32,10 +32,12 @@ type Draft = {
     sessionsPerWeek?: number;
     unit?: Unit;
     amount?: number;
-    sessionHours?: number | null;
+    sessionHours?: number;
     gender?: Gender;
     requirements?: string | null;
 };
+
+const WEEKS_PER_MONTH = 4.33;
 
 // In-memory drafts. If the bot restarts mid-form, the agency sends /new again.
 const drafts = new Map<number, Draft>();
@@ -50,9 +52,28 @@ async function findAgency(username: string | undefined) {
     return rows[0] ?? null;
 }
 
-// Monthly equivalent for hourly offers: rate x hours per session x sessions per week x 4.33 weeks.
-function monthlyFromHourly(d: Draft): number {
-    return Math.round((d.amount ?? 0) * (d.sessionHours ?? 0) * (d.sessionsPerWeek ?? 0) * 4.33);
+// Monthly estimate for an hourly rate.
+function monthlyOf(d: Draft): number {
+    if (d.unit === 'HOUR') {
+        return Math.round((d.amount ?? 0) * (d.sessionHours ?? 0) * (d.sessionsPerWeek ?? 0) * WEEKS_PER_MONTH);
+    }
+    return d.amount ?? 0;
+}
+
+// Hourly estimate for a monthly salary.
+function hourlyOf(d: Draft): number {
+    if (d.unit === 'MONTH') {
+        const hoursPerMonth = (d.sessionHours ?? 0) * (d.sessionsPerWeek ?? 0) * WEEKS_PER_MONTH;
+        return hoursPerMonth > 0 ? Math.round((d.amount ?? 0) / hoursPerMonth) : 0;
+    }
+    return d.amount ?? 0;
+}
+
+// Shows "All Subjects" when every option is picked, the list otherwise, and emptyLabel when none.
+function listLabel(items: string[], all: string[], allLabel: string, emptyLabel: string): string {
+    if (items.length === 0) return emptyLabel;
+    if (all.every((x) => items.includes(x))) return allLabel;
+    return items.join(', ');
 }
 
 function multiKeyboard(kind: string, options: string[], selected: string[]) {
@@ -63,6 +84,7 @@ function multiKeyboard(kind: string, options: string[], selected: string[]) {
     });
     kb.row().text('All', `ag:${kind}:ALL`).text('Clear', `ag:${kind}:CLEAR`);
     kb.row().text('Done', `ag:${kind}:DONE`);
+    if (kind === 'sub') kb.row().text('Skip', 'ag:skip:subjects');
     return kb;
 }
 
@@ -77,12 +99,9 @@ function choices(prefix: string, options: [string, string][], perRow = 2) {
 
 function salaryLine(d: Draft): string {
     if (d.unit === 'HOUR') {
-        return (
-            `${d.amount} ETB per hour, ${d.sessionHours} hours per session ` +
-            `(about ${monthlyFromHourly(d).toLocaleString()} ETB per month)`
-        );
+        return `${d.amount} ETB per hour (about ${monthlyOf(d).toLocaleString()} ETB per month)`;
     }
-    return `${d.amount?.toLocaleString()} ETB per month`;
+    return `${d.amount?.toLocaleString()} ETB per month (about ${hourlyOf(d).toLocaleString()} ETB per hour)`;
 }
 
 // The offer as tutors will read it. Each detail is on its own line.
@@ -93,13 +112,14 @@ function offerLines(d: Draft): string[] {
     if (d.postHeader) lines.push(d.postHeader, '');
 
     lines.push(
-        `Subjects: ${d.subjects.join(', ')}`,
-        `Grades: ${d.grades.join(', ')}`,
+        `Subjects: ${listLabel(d.subjects, SUBJECTS, 'All Subjects', 'Not specified')}`,
+        `Grades: ${listLabel(d.grades, GRADES, 'All Grades', 'Not specified')}`,
         `Area: ${d.subCity}`
     );
     if (d.locationDetail) lines.push(`Location: ${d.locationDetail}`);
     lines.push(
         `Sessions: ${d.sessionsPerWeek} per week`,
+        `Session length: ${d.sessionHours} hours`,
         `Pay: ${salaryLine(d)}`,
         `Tutor gender: ${genderLabel}`
     );
@@ -113,7 +133,7 @@ function offerLines(d: Draft): string[] {
 async function ask(ctx: Context, d: Draft) {
     switch (d.step) {
         case 'subjects':
-            return ctx.reply('Which subjects? Pick one or more, or tap All.', {
+            return ctx.reply('Which subjects? Pick one or more, tap All, or tap Skip.', {
                 reply_markup: multiKeyboard('sub', SUBJECTS, d.subjects),
             });
         case 'grades':
@@ -194,11 +214,16 @@ export function registerAgencyHandlers(bot: Bot) {
         const list = isSub ? d.subjects : d.grades;
 
         if (value === 'DONE') {
-            if (list.length === 0) {
-                return ctx.answerCallbackQuery({ text: 'Pick at least one.' });
+            // Subjects are optional. Grades need at least one.
+            if (isSub && list.length === 0) list.push(...SUBJECTS);
+            if (!isSub && list.length === 0) {
+                return ctx.answerCallbackQuery({ text: 'Pick at least one grade.' });
             }
             await ctx.answerCallbackQuery();
-            await ctx.editMessageText(`${isSub ? 'Subjects' : 'Grades'}: ${list.join(', ')}`);
+            const label = isSub
+                ? listLabel(list, SUBJECTS, 'All Subjects', 'Not specified')
+                : listLabel(list, GRADES, 'All Grades', 'Not specified');
+            await ctx.editMessageText(`${isSub ? 'Subjects' : 'Grades'}: ${label}`);
             d.step = isSub ? 'grades' : 'area';
             return ask(ctx, d);
         }
@@ -243,8 +268,8 @@ export function registerAgencyHandlers(bot: Bot) {
         await ask(ctx, d);
     });
 
-    // Skip buttons for the optional fields.
-    bot.callbackQuery(/^ag:skip:(location|requirements)$/, async (ctx) => {
+    // Skip buttons for the optional steps.
+    bot.callbackQuery(/^ag:skip:(subjects|location|requirements)$/, async (ctx) => {
         const d = drafts.get(ctx.from.id);
         if (!d) {
             await ctx.answerCallbackQuery();
@@ -252,7 +277,10 @@ export function registerAgencyHandlers(bot: Bot) {
         }
 
         const [, field] = ctx.match as RegExpMatchArray;
-        if (field === 'location') {
+        if (field === 'subjects') {
+            d.subjects = [...SUBJECTS];
+            d.step = 'grades';
+        } else if (field === 'location') {
             d.locationDetail = null;
             d.step = 'sessions';
         } else {
@@ -271,8 +299,9 @@ export function registerAgencyHandlers(bot: Bot) {
             return ctx.reply('Send /new to start a new offer.');
         }
 
-        const monthly = d.unit === 'HOUR' ? monthlyFromHourly(d) : d.amount!;
-        const title = `${d.subjects.join(' & ')} tutor (${d.grades.join(' & ')})`;
+        const subjectsText = listLabel(d.subjects, SUBJECTS, 'All Subjects', 'Any subject');
+        const gradesText = listLabel(d.grades, GRADES, 'All Grades', 'Any grade');
+        const title = `${subjectsText} tutor (${gradesText})`;
 
         await pool.query(
             `INSERT INTO "TutoringOffer"
@@ -283,16 +312,16 @@ export function registerAgencyHandlers(bot: Bot) {
             [
                 d.orgId,
                 title,
-                d.subjects[0],
-                d.grades[0],
+                d.subjects[0] ?? 'Not specified',
+                d.grades[0] ?? 'Not specified',
                 d.subjects,
                 d.grades,
                 d.subCity,
                 d.locationDetail ?? null,
-                monthly,
+                monthlyOf(d),
                 d.unit,
                 d.amount,
-                d.unit === 'HOUR' ? d.sessionHours ?? null : null,
+                d.sessionHours,
                 d.sessionsPerWeek,
                 d.gender ?? null,
                 d.requirements ?? null,
@@ -330,7 +359,7 @@ export function registerAgencyHandlers(bot: Bot) {
                 return ctx.reply(`Please type a whole number between ${min} and ${max}.`);
             }
             d.amount = amount;
-            d.step = d.unit === 'HOUR' ? 'hours' : 'gender';
+            d.step = 'hours';
             return ask(ctx, d);
         }
 
