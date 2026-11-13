@@ -37,27 +37,26 @@ bot.use(async (ctx, next) => {
 });
 
 // /start, optionally with the channel that sent them: t.me/NextTutorBot?start=channelname
+// Also used by the Start button after a reset, so it must work without a /start message.
 async function startOnboarding(ctx: Context) {
-    bot.command('start', async (ctx) => {
-        const source = ctx.match?.trim() || 'direct';
-        const from = ctx.from!;
+    const source = ctx.match?.toString().trim() || 'direct';
+    const from = ctx.from!;
 
-        await pool.query(
-            `INSERT INTO "TelegramSubscriber" ("telegramId", "firstName", "username", "sourceChannel")
+    await pool.query(
+        `INSERT INTO "TelegramSubscriber" ("telegramId", "firstName", "username", "sourceChannel")
          VALUES ($1, $2, $3, $4)
          ON CONFLICT ("telegramId") DO NOTHING`,
-            [from.id, from.first_name ?? null, from.username ?? null, source]
-        );
+        [from.id, from.first_name ?? null, from.username ?? null, source]
+    );
 
-        const keyboard = new InlineKeyboard();
-        KNOWN_SUB_CITIES.forEach((city, i) => {
-            keyboard.text(city, `area:${city}`);
-            if (i % 2 === 1) keyboard.row();
-        });
+    const keyboard = new InlineKeyboard();
+    KNOWN_SUB_CITIES.forEach((city, i) => {
+        keyboard.text(city, `area:${city}`);
+        if (i % 2 === 1) keyboard.row();
+    });
 
-        await ctx.reply('Welcome to NextTutor alerts. Which sub-city do you teach in?', {
-            reply_markup: keyboard,
-        });
+    await ctx.reply('Welcome to NextTutor alerts. Which sub-city do you teach in?', {
+        reply_markup: keyboard,
     });
 }
 
