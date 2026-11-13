@@ -5,8 +5,8 @@ import { demoAccounts, type DemoAccount } from './data/demo-tutors';
 import { LoginScreen } from './screens/LoginScreen';
 import { RegisterScreen } from './screens/RegisterScreen';
 import { OffersScreen } from './screens/OffersScreen';
-import type { Tutor } from '../shared/types';
 import { StyleSheet, Pressable, Text, View } from 'react-native';
+import type { Application, Tutor } from '../shared/types';
 
 type Screen = 'LOGIN' | 'REGISTER' | 'OFFERS';
 
@@ -14,6 +14,7 @@ export default function App() {
     const [accounts, setAccounts] = useState<DemoAccount[]>(demoAccounts);
     const [screen, setScreen] = useState<Screen>('LOGIN');
     const [tutor, setTutor] = useState<Tutor | null>(null);
+    const [applications, setApplications] = useState<Application[]>([]);
 
     function handleRegistered(newTutor: Tutor, password: string) {
         setAccounts((prev) => [...prev, { ...newTutor, password }]);
@@ -29,6 +30,24 @@ export default function App() {
     function handleLogout() {
         setTutor(null);
         setScreen('LOGIN');
+    }
+
+    function handleApply(offerId: string) {
+        if(!tutor) return;
+        setApplications((prev) => {
+            const already = prev.some((a) => a.offerId === offerId && a.tutorId === tutor.id);
+            if (already) return prev;
+            return [
+                ...prev,
+                {
+                    id: `demo-app-${Date.now()}`,
+                    offerId,
+                    tutorId: tutor.id,
+                    status: 'APPLIED',
+                    appliedAt: new Date().toISOString().slice(0, 10),
+                },
+            ];
+        });
     }
 
     return (

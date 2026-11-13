@@ -10,7 +10,7 @@ datasource db {
 model User {
   id             String   @id @default(uuid())
   username       String   @unique
-  email          String?   @unique
+  email          String?  @unique
   phoneNumber    String   @unique
   passwordHash   String
   role           Role     @default(PARENT)
@@ -401,4 +401,65 @@ enum InvitationVerificationStatus {
   PENDING
   VERIFIED
   REJECTED
+}
+
+// Schema for Telegram Bot
+// Telegram tutor subscribers. Separate from User, so tutors can use the bot
+// without making an app account. A link to User can be added later.
+model TelegramSubscriber {
+  id            String           @id @default(uuid())
+  telegramId    BigInt           @unique
+  firstName     String?
+  username      String?
+  sourceChannel String? // which channel's button they came from
+  subCity       String?
+  subjects      String[]
+  grades        String[]
+  minSalaryEtb  Int?
+  status        SubscriberStatus @default(ACTIVE)
+  pausedUntil   DateTime?
+  createdAt     DateTime         @default(now())
+
+  preferences NotificationPreference[]
+  deliveries  OfferDelivery[]
+}
+
+enum SubscriberStatus {
+  ACTIVE
+  PAUSED
+  STOPPED
+}
+
+// One row per subscriber per category. Missing row means "on".
+model NotificationPreference {
+  id           String               @id @default(uuid())
+  subscriberId String
+  category     NotificationCategory
+  enabled      Boolean              @default(true)
+
+  subscriber TelegramSubscriber @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+
+  @@unique([subscriberId, category])
+}
+
+enum NotificationCategory {
+  OFFER_ALERTS
+  APPLICATION_UPDATES
+  AVAILABILITY_CHECK
+  SCAM_WARNINGS
+  SALARY_INSIGHTS
+  REFERRALS
+  TIPS
+}
+
+// Records each offer sent to a subscriber, so nobody gets the same offer twice.
+model OfferDelivery {
+  id           String   @id @default(uuid())
+  subscriberId String
+  offerId      String
+  sentAt       DateTime @default(now())
+
+  subscriber TelegramSubscriber @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+
+  @@unique([subscriberId, offerId])
 }
