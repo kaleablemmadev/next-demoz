@@ -6,6 +6,7 @@ export const COMMANDS = [
     { command: 'menu', description: 'Show the main menu' },
     { command: 'search', description: 'Search open offers' },
     { command: 'settings', description: 'Alert and notification settings' },
+    { command: 'gender', description: 'Change my gender' },
     { command: 'help', description: 'List all functions' },
     { command: 'reset', description: 'Erase my data and start again' },
 ];
@@ -14,6 +15,7 @@ const MENU_TEXT =
     'NextTutor menu\n\n' +
     '/search - find open offers by subject, grade, area and gender\n' +
     '/settings - pause, resume or stop offer alerts\n' +
+    '/gender - Change your gender. This affects which offers match you.\n' +
     '/help - what each function does\n' +
     '/reset - erase all your data and start again\n\n' +
     'Tap a button below, or type a command.';

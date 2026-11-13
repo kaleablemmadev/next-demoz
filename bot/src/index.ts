@@ -15,6 +15,7 @@ import { registerSettingsHandlers } from './settings.js';
 import { registerGenderHandlers } from './gender.js';
 import { registerMenuHandlers } from './menu.js';
 import { registerSearchHandlers } from './search.js';
+import { registerGenderSettingsHandlers } from './gender-settings.js';
 import { registerRepostHandlers, startRepostScheduler } from './reposts.js';
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -86,6 +87,7 @@ registerRepostHandlers(bot);
 registerGenderHandlers(bot);
 registerSearchHandlers(bot);
 registerMenuHandlers(bot, startOnboarding);
+registerGenderSettingsHandlers(bot);
 
 bot.catch((err) => console.error('Bot error:', err.error));
 
