@@ -10,6 +10,7 @@ import { registerOfferHandlers } from './offers.js';
 import { sendPendingAlerts } from './publish.js';
 import { startDigestScheduler } from './digest.js';
 import { registerAgencyHandlers } from './agency.js';
+import { registerSettingsHandlers } from './settings.js';
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const publicUrl = process.env.PUBLIC_URL;             // e.g. https://nextdemoz-bot.onrender.com
@@ -72,6 +73,7 @@ registerGradeHandlers(bot);
 registerSalaryHandlers(bot);
 registerOfferHandlers(bot);
 registerAgencyHandlers(bot);
+registerSettingsHandlers(bot);
 
 bot.catch((err) => console.error('Bot error:', err.error));
 
