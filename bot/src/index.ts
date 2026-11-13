@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import http from 'node:http';
+import type { Context } from 'grammy';
 import { Bot, InlineKeyboard, webhookCallback } from 'grammy';
 import { pool } from './db.js';
 import { KNOWN_SUB_CITIES } from '../../shared/rules/nearby-areas.js';
@@ -12,6 +13,7 @@ import { startDigestScheduler } from './digest.js';
 import { registerAgencyHandlers } from './agency.js';
 import { registerSettingsHandlers } from './settings.js';
 import { registerGenderHandlers } from './gender.js';
+import { registerMenuHandlers } from './menu.js';
 import { registerSearchHandlers } from './search.js';
 import { registerRepostHandlers, startRepostScheduler } from './reposts.js';
 
@@ -35,27 +37,31 @@ bot.use(async (ctx, next) => {
 });
 
 // /start, optionally with the channel that sent them: t.me/NextTutorBot?start=channelname
-bot.command('start', async (ctx) => {
-    const source = ctx.match?.trim() || 'direct';
-    const from = ctx.from!;
+async function startOnboarding(ctx: Context) {
+    bot.command('start', async (ctx) => {
+        const source = ctx.match?.trim() || 'direct';
+        const from = ctx.from!;
 
-    await pool.query(
-        `INSERT INTO "TelegramSubscriber" ("telegramId", "firstName", "username", "sourceChannel")
+        await pool.query(
+            `INSERT INTO "TelegramSubscriber" ("telegramId", "firstName", "username", "sourceChannel")
          VALUES ($1, $2, $3, $4)
          ON CONFLICT ("telegramId") DO NOTHING`,
-        [from.id, from.first_name ?? null, from.username ?? null, source]
-    );
+            [from.id, from.first_name ?? null, from.username ?? null, source]
+        );
 
-    const keyboard = new InlineKeyboard();
-    KNOWN_SUB_CITIES.forEach((city, i) => {
-        keyboard.text(city, `area:${city}`);
-        if (i % 2 === 1) keyboard.row();
-    });
+        const keyboard = new InlineKeyboard();
+        KNOWN_SUB_CITIES.forEach((city, i) => {
+            keyboard.text(city, `area:${city}`);
+            if (i % 2 === 1) keyboard.row();
+        });
 
-    await ctx.reply('Welcome to NextTutor alerts. Which sub-city do you teach in?', {
-        reply_markup: keyboard,
+        await ctx.reply('Welcome to NextTutor alerts. Which sub-city do you teach in?', {
+            reply_markup: keyboard,
+        });
     });
-});
+}
+
+bot.command('start', startOnboarding);
 
 // The tutor tapped a sub-city.
 bot.callbackQuery(/^area:(.+)$/, async (ctx) => {
@@ -80,6 +86,7 @@ registerSettingsHandlers(bot);
 registerRepostHandlers(bot);
 registerGenderHandlers(bot);
 registerSearchHandlers(bot);
+registerMenuHandlers(bot, startOnboarding);
 
 bot.catch((err) => console.error('Bot error:', err.error));
 

@@ -1,8 +1,7 @@
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
-import {askGrades} from "./grades";
+import { askGrades } from './grades.js';
 
-// Must match the subjects used in offers.
 export const SUBJECTS = ['Mathematics', 'Physics', 'English', 'Chemistry'];
 
 async function selectedSubjects(telegramId: number): Promise<string[]> {
@@ -14,50 +13,55 @@ async function selectedSubjects(telegramId: number): Promise<string[]> {
 }
 
 function subjectKeyboard(selected: string[]) {
-    const keyboard = new InlineKeyboard();
-    SUBJECTS.forEach((subject, i) => {
-        keyboard.text(`${selected.includes(subject) ? '✅ ' : ''}${subject}`, `subj:${subject}`);
-        if (i % 2 === 1) keyboard.row();
+    const kb = new InlineKeyboard();
+    SUBJECTS.forEach((s, i) => {
+        kb.text(`${selected.includes(s) ? '✅ ' : ''}${s}`, `subj:${s}`);
+        if (i % 2 === 1) kb.row();
     });
-    keyboard.row().text('Done', 'subj:done');
-    return keyboard;
+    kb.row().text('All subjects', 'subj:ALL').text('Clear', 'subj:CLEAR');
+    kb.row().text('Done', 'subj:DONE');
+    return kb;
 }
 
 export async function askSubjects(ctx: Context) {
     const selected = await selectedSubjects(ctx.from!.id);
-    await ctx.reply('Which subjects do you teach? Tap to select, then tap Done.', {
+    await ctx.reply('Which subjects do you teach? Pick one or more, or tap All subjects.', {
         reply_markup: subjectKeyboard(selected),
     });
 }
 
 export function registerSubjectHandlers(bot: Bot) {
     bot.callbackQuery(/^subj:(.+)$/, async (ctx) => {
-        const value = ctx.match[1];
-        const telegramId = ctx.from.id;
+        const id = ctx.from.id;
+        const action = ctx.match[1];
 
-        if (value === 'done') {
-            const selected = await selectedSubjects(telegramId);
+        if (action === 'DONE') {
+            const selected = await selectedSubjects(id);
             if (selected.length === 0) {
-                return ctx.answerCallbackQuery({ text: 'Select at least one subject.', show_alert: true });
+                return ctx.answerCallbackQuery({ text: 'Pick at least one subject.' });
             }
             await ctx.answerCallbackQuery();
-            await ctx.editMessageText(`Subjects saved: ${selected.join(', ')}.`);
+            await ctx.editMessageText(`Subjects: ${selected.join(', ')}`);
             return askGrades(ctx);
         }
 
-        // Add the subject if it isn't selected, remove it if it is.
-        const { rows } = await pool.query(
-            `UPDATE "TelegramSubscriber"
-             SET subjects = CASE
-                 WHEN $1::text = ANY(subjects) THEN array_remove(subjects, $1::text)
-                 ELSE array_append(subjects, $1::text)
-             END
-             WHERE "telegramId" = $2
-             RETURNING subjects`,
-            [value, telegramId]
-        );
+        let next: string[];
+        if (action === 'ALL') {
+            next = [...SUBJECTS];
+        } else if (action === 'CLEAR') {
+            next = [];
+        } else {
+            const current = await selectedSubjects(id);
+            next = current.includes(action)
+                ? current.filter((s) => s !== action)
+                : [...current, action];
+        }
 
+        await pool.query(
+            `UPDATE "TelegramSubscriber" SET subjects = $2::text[] WHERE "telegramId" = $1`,
+            [id, next]
+        );
         await ctx.answerCallbackQuery();
-        await ctx.editMessageReplyMarkup({ reply_markup: subjectKeyboard(rows[0]?.subjects ?? []) });
+        await ctx.editMessageReplyMarkup({ reply_markup: subjectKeyboard(next) });
     });
 }

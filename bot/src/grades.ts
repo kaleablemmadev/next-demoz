@@ -1,9 +1,7 @@
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
-import {askSalary} from "./salary";
 import { askGender } from './gender.js';
 
-// Must match the grades used in offers.
 export const GRADES = ['Grade 4', 'Grade 8', 'Grade 11'];
 
 async function selectedGrades(telegramId: number): Promise<string[]> {
@@ -15,48 +13,54 @@ async function selectedGrades(telegramId: number): Promise<string[]> {
 }
 
 function gradeKeyboard(selected: string[]) {
-    const keyboard = new InlineKeyboard();
-    GRADES.forEach((grade) => {
-        keyboard.text(`${selected.includes(grade) ? '✅ ' : ''}${grade}`, `grade:${grade}`).row();
+    const kb = new InlineKeyboard();
+    GRADES.forEach((g) => {
+        kb.text(`${selected.includes(g) ? '✅ ' : ''}${g}`, `grade:${g}`).row();
     });
-    keyboard.text('Done', 'grade:done');
-    return keyboard;
+    kb.text('All grades', 'grade:ALL').text('Clear', 'grade:CLEAR');
+    kb.row().text('Done', 'grade:DONE');
+    return kb;
 }
 
 export async function askGrades(ctx: Context) {
     const selected = await selectedGrades(ctx.from!.id);
-    await ctx.reply('Which grades do you teach? Tap to select, then tap Done.', {
+    await ctx.reply('Which grades do you teach? Pick one or more, or tap All grades.', {
         reply_markup: gradeKeyboard(selected),
     });
 }
 
 export function registerGradeHandlers(bot: Bot) {
     bot.callbackQuery(/^grade:(.+)$/, async (ctx) => {
-        const value = ctx.match[1];
-        const telegramId = ctx.from.id;
+        const id = ctx.from.id;
+        const action = ctx.match[1];
 
-        if (value === 'done') {
-            const selected = await selectedGrades(telegramId);
+        if (action === 'DONE') {
+            const selected = await selectedGrades(id);
             if (selected.length === 0) {
-                return ctx.answerCallbackQuery({ text: 'Select at least one grade.', show_alert: true });
+                return ctx.answerCallbackQuery({ text: 'Pick at least one grade.' });
             }
             await ctx.answerCallbackQuery();
-            await ctx.editMessageText(`Grades saved: ${selected.join(', ')}.`);
+            await ctx.editMessageText(`Grades: ${selected.join(', ')}`);
             return askGender(ctx);
         }
 
-        const { rows } = await pool.query(
-            `UPDATE "TelegramSubscriber"
-             SET grades = CASE
-                 WHEN $1::text = ANY(grades) THEN array_remove(grades, $1::text)
-                 ELSE array_append(grades, $1::text)
-             END
-             WHERE "telegramId" = $2
-             RETURNING grades`,
-            [value, telegramId]
-        );
+        let next: string[];
+        if (action === 'ALL') {
+            next = [...GRADES];
+        } else if (action === 'CLEAR') {
+            next = [];
+        } else {
+            const current = await selectedGrades(id);
+            next = current.includes(action)
+                ? current.filter((g) => g !== action)
+                : [...current, action];
+        }
 
+        await pool.query(
+            `UPDATE "TelegramSubscriber" SET grades = $2::text[] WHERE "telegramId" = $1`,
+            [id, next]
+        );
         await ctx.answerCallbackQuery();
-        await ctx.editMessageReplyMarkup({ reply_markup: gradeKeyboard(rows[0]?.grades ?? []) });
+        await ctx.editMessageReplyMarkup({ reply_markup: gradeKeyboard(next) });
     });
 }
