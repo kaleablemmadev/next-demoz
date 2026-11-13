@@ -76,6 +76,8 @@ bot.callbackQuery(/^area:(.+)$/, async (ctx) => {
     await askSubjects(ctx);
 });
 
+bot.on('callback_query:data', (ctx, next) => { console.log('Button pressed:', ctx.callbackQuery.data); return next(); });
+
 registerSubjectHandlers(bot);
 registerGradeHandlers(bot);
 registerSalaryHandlers(bot);
