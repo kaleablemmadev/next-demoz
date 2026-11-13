@@ -14,6 +14,7 @@ import { registerAgencyHandlers } from './agency.js';
 import { registerSettingsHandlers } from './settings.js';
 import { registerGenderHandlers } from './gender.js';
 import { registerMenuHandlers } from './menu.js';
+import { registerRoleHandlers } from './roles.js';
 import { registerSearchHandlers } from './search.js';
 import { registerGenderSettingsHandlers } from './gender-settings.js';
 import { registerRepostHandlers, startRepostScheduler } from './reposts.js';
@@ -39,8 +40,7 @@ bot.use(async (ctx, next) => {
 
 // /start, optionally with the channel that sent them: t.me/NextTutorBot?start=channelname
 // Also used by the Start button after a reset, so it must work without a /start message.
-async function startOnboarding(ctx: Context) {
-    const source = ctx.match?.toString().trim() || 'direct';
+async function startOnboarding(ctx: Context, source = 'direct') {
     const from = ctx.from!;
 
     await pool.query(
@@ -60,8 +60,6 @@ async function startOnboarding(ctx: Context) {
         reply_markup: keyboard,
     });
 }
-
-bot.command('start', startOnboarding);
 
 // The tutor tapped a sub-city.
 bot.callbackQuery(/^area:(.+)$/, async (ctx) => {
@@ -86,7 +84,8 @@ registerSettingsHandlers(bot);
 registerRepostHandlers(bot);
 registerGenderHandlers(bot);
 registerSearchHandlers(bot);
-registerMenuHandlers(bot, startOnboarding);
+registerRoleHandlers(bot, startOnboarding);
+registerMenuHandlers(bot);
 registerGenderSettingsHandlers(bot);
 
 bot.catch((err) => console.error('Bot error:', err.error));
