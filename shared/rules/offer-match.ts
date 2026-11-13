@@ -25,6 +25,7 @@ export type TutorProfile = {
     subjects: string[];
     grades: string[];
     minSalaryEtb: number | null;
+    gender: 'MALE' | 'FEMALE' | null;
 };
 
 export type OfferProfile = {
@@ -32,6 +33,7 @@ export type OfferProfile = {
     subjects: string[];        // every subject the offer asks for
     gradeLevels: string[];     // every grade the offer asks for
     monthlyEtb: number;        // monthly equivalent, see monthlyEquivalentEtb
+    preferredGender: 'MALE' | 'FEMALE' | null;
 };
 
 // A tutor matches only if they can teach every subject and grade the offer asks for,
@@ -43,6 +45,7 @@ export function tutorMatchesOffer(tutor: TutorProfile, offer: OfferProfile): boo
     const hasSubjects = offer.subjects.every((s) => tutor.subjects.includes(s));
     const hasGrades = offer.gradeLevels.every((g) => tutor.grades.includes(g));
     const meetsSalary = tutor.minSalaryEtb === null || offer.monthlyEtb >= tutor.minSalaryEtb;
+    const genderOk = offer.preferredGender === null || tutor.gender === offer.preferredGender;
 
-    return inArea && hasSubjects && hasGrades && meetsSalary;
+    return inArea && hasSubjects && hasGrades && meetsSalary && genderOk;
 }

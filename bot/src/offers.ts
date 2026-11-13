@@ -12,19 +12,20 @@ export type OpenOffer = {
     sessionsPerWeek: number;
     agencyName: string;
     agencyUsername: string;
+    preferredTutorGender: 'MALE' | 'FEMALE' | null;
 };
 
 // Every open offer this tutor fully matches: all subjects, all grades, area and salary.
 export async function findMatchingOffers(telegramId: number): Promise<OpenOffer[]> {
     const me = await pool.query(
-        `SELECT "subCity", subjects, grades, "minSalaryEtb" FROM "TelegramSubscriber" WHERE "telegramId" = $1`,
+        `SELECT "subCity", subjects, grades, "minSalaryEtb", gender FROM "TelegramSubscriber" WHERE "telegramId" = $1`,
         [telegramId]
     );
     const tutor = me.rows[0];
     if (!tutor || !tutor.subCity) return [];
 
     const { rows } = await pool.query(`
-        SELECT t.id, t.title, t.subjects, t."gradeLevels", t."subCity", t."monthlySalaryEtb",
+        SELECT t.id, t.title, t.subjects, t."gradeLevels", t."subCity", t."monthlySalaryEtb", t."preferredTutorGender",
                t."sessionsPerWeek", o.name AS "agencyName", o."telegramUsername" AS "agencyUsername"
         FROM "TutoringOffer" t
                  JOIN "Organization" o ON o.id = t."organizationId"
@@ -39,12 +40,14 @@ export async function findMatchingOffers(telegramId: number): Promise<OpenOffer[
                 subjects: tutor.subjects,
                 grades: tutor.grades,
                 minSalaryEtb: tutor.minSalaryEtb,
+                gender: tutor.gender
             },
             {
                 subCity: o.subCity,
                 subjects: o.subjects,
                 gradeLevels: o.gradeLevels,
                 monthlyEtb: o.monthlySalaryEtb,
+                preferredGender: o.preferredTutorGender,
             }
         )
     );

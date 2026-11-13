@@ -11,6 +11,7 @@ import { sendPendingAlerts } from './publish.js';
 import { startDigestScheduler } from './digest.js';
 import { registerAgencyHandlers } from './agency.js';
 import { registerSettingsHandlers } from './settings.js';
+import { registerGenderHandlers } from './gender.js';
 import { registerRepostHandlers, startRepostScheduler } from './reposts.js';
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -76,6 +77,7 @@ registerOfferHandlers(bot);
 registerAgencyHandlers(bot);
 registerSettingsHandlers(bot);
 registerRepostHandlers(bot);
+registerGenderHandlers(bot);
 
 bot.catch((err) => console.error('Bot error:', err.error));
 

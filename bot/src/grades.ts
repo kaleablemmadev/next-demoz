@@ -1,6 +1,7 @@
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
 import {askSalary} from "./salary";
+import { askGender } from './gender.js';
 
 // Must match the grades used in offers.
 export const GRADES = ['Grade 4', 'Grade 8', 'Grade 11'];
@@ -41,7 +42,7 @@ export function registerGradeHandlers(bot: Bot) {
             }
             await ctx.answerCallbackQuery();
             await ctx.editMessageText(`Grades saved: ${selected.join(', ')}.`);
-            return askSalary(ctx);
+            return askGender(ctx);
         }
 
         const { rows } = await pool.query(

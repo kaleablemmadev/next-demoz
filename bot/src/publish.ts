@@ -5,7 +5,7 @@ import { sendOfferAlerts, type Agency, type AlertOffer } from './alerts.js';
 // Sends alerts for every open offer that hasn't been alerted yet.
 export async function sendPendingAlerts(bot: Bot): Promise<void> {
     const { rows } = await pool.query(`
-        SELECT t.id, t.title, t.subjects, t."gradeLevels", t."subCity",
+        SELECT t.id, t.title, t.subjects, t."gradeLevels", t."subCity", t."preferredTutorGender",
                t."monthlySalaryEtb", t."sessionsPerWeek", t.status,
                o.name AS "agencyName", o."telegramUsername"
         FROM "TutoringOffer" t
@@ -25,6 +25,7 @@ export async function sendPendingAlerts(bot: Bot): Promise<void> {
             monthlySalaryEtb: r.monthlySalaryEtb,
             sessionsPerWeek: r.sessionsPerWeek,
             status: r.status,
+            preferredTutorGender: r.preferredTutorGender,
         };
 
         const agency: Agency = {
