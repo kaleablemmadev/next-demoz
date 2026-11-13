@@ -32,7 +32,7 @@ function listLabel(items: string[], all: string[], allLabel: string): string {
     return items.join(', ');
 }
 
-function payLine(o: CardOffer): string {
+export function payLine(o: CardOffer): string {
     if (o.salaryUnit === 'HOUR') {
         return `${o.salaryAmountEtb.toLocaleString()} ETB per hour (about ${o.monthlySalaryEtb.toLocaleString()} ETB per month)`;
     }
@@ -60,4 +60,9 @@ export function offerCardText(o: CardOffer, defaultHeader = 'New tutoring offer'
     if (o.postFooter) lines.push('', o.postFooter);
 
     return lines.join('\n');
+}
+
+// One line with subjects, grades and area, for the digest.
+export function summaryLine(o: CardOffer): string {
+    return `${listLabel(o.subjects, SUBJECTS, 'All Subjects')} · ${listLabel(o.gradeLevels, GRADES, 'All Grades')} · ${o.subCity}`;
 }

@@ -1,18 +1,12 @@
-import { Bot, InlineKeyboard, type Context } from 'grammy';
+import { Bot, type Context } from 'grammy';
 import { pool } from './db.js';
 import { tutorMatchesOffer } from '../../shared/rules/offer-match.js';
+import { offerCardText, type CardOffer } from './card.js';
 
-export type OpenOffer = {
+export type OpenOffer = CardOffer & {
     id: string;
     title: string;
-    subjects: string[];
-    gradeLevels: string[];
-    subCity: string;
-    monthlySalaryEtb: number;
-    sessionsPerWeek: number;
     agencyName: string;
-    agencyUsername: string;
-    preferredTutorGender: 'MALE' | 'FEMALE' | null;
 };
 
 // Every open offer this tutor fully matches: all subjects, all grades, area and salary.
@@ -24,23 +18,26 @@ export async function findMatchingOffers(telegramId: number): Promise<OpenOffer[
     const tutor = me.rows[0];
     if (!tutor || !tutor.subCity) return [];
 
-    const { rows } = await pool.query(`
-        SELECT t.id, t.title, t.subjects, t."gradeLevels", t."subCity", t."monthlySalaryEtb", t."preferredTutorGender",
-               t."sessionsPerWeek", o.name AS "agencyName", o."telegramUsername" AS "agencyUsername"
+    const { rows } = await pool.query<OpenOffer>(`
+        SELECT t.id, t.title, t.subjects, t."gradeLevels", t."subCity", t."locationDetail",
+               t."sessionsPerWeek", t."sessionHours", t."salaryUnit", t."salaryAmountEtb",
+               t."monthlySalaryEtb", t."preferredTutorGender", t.requirements,
+               o."postHeader", o."postFooter", o.name AS "agencyName",
+               o."telegramUsername" AS "agencyUsername"
         FROM "TutoringOffer" t
                  JOIN "Organization" o ON o.id = t."organizationId"
         WHERE t.status = 'OPEN'
         ORDER BY t."postedAt" DESC
     `);
 
-    return rows.filter((o: OpenOffer) =>
+    return rows.filter((o) =>
         tutorMatchesOffer(
             {
                 subCity: tutor.subCity,
                 subjects: tutor.subjects,
                 grades: tutor.grades,
                 minSalaryEtb: tutor.minSalaryEtb,
-                gender: tutor.gender
+                gender: tutor.gender,
             },
             {
                 subCity: o.subCity,
@@ -53,16 +50,9 @@ export async function findMatchingOffers(telegramId: number): Promise<OpenOffer[
     );
 }
 
+// The same card the alerts and group posts use, with the agency name added.
 export function offerText(o: OpenOffer): string {
-    return [
-        o.title,
-        `${o.subjects.join(', ')} · ${o.gradeLevels.join(' & ')} · ${o.subCity}`,
-        `${o.sessionsPerWeek} sessions a week`,
-        `${o.monthlySalaryEtb.toLocaleString()} ETB / month`,
-        '',
-        `Agency: ${o.agencyName}`,
-        `Contact: @${o.agencyUsername}`,
-    ].join('\n');
+    return `${offerCardText(o, 'Open tutoring offer')}\n\nAgency: ${o.agencyName}`;
 }
 
 const SHOW_LIMIT = 10;

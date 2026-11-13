@@ -15,6 +15,7 @@ import { registerSettingsHandlers } from './settings.js';
 import { registerGenderHandlers } from './gender.js';
 import { registerMenuHandlers } from './menu.js';
 import { registerRoleHandlers } from './roles.js';
+import { registerLeaveHandlers } from './leave.js';
 import { registerSearchHandlers } from './search.js';
 import { registerGenderSettingsHandlers } from './gender-settings.js';
 import { registerRepostHandlers, startRepostScheduler } from './reposts.js';
@@ -86,6 +87,7 @@ registerGenderHandlers(bot);
 registerSearchHandlers(bot);
 registerRoleHandlers(bot, startOnboarding);
 registerMenuHandlers(bot);
+registerLeaveHandlers(bot);
 registerGenderSettingsHandlers(bot);
 
 bot.catch((err) => console.error('Bot error:', err.error));

@@ -1,7 +1,7 @@
-import { Bot, InlineKeyboard } from 'grammy';
 import { pool } from './db.js';
 import { SUBJECTS } from './subjects.js';
 import { GRADES } from './grades.js';
+import { Bot, InlineKeyboard, type Api } from 'grammy';
 
 const CHECK_EVERY_MS = 60 * 1000;
 const WEEKS_PER_MONTH = 4.33;
@@ -30,6 +30,7 @@ type PostOffer = {
     groupMessageId: string | null;
     channelMessageId: string | null;
     postDestination: 'GROUP' | 'CHANNEL' | 'BOTH';
+    telegramUserId: string | null;
 };
 
 // Same select for posting and for closing, so both see the same fields.
@@ -39,7 +40,7 @@ const OFFER_SELECT = `
            t."monthlySalaryEtb", t."preferredTutorGender", t.requirements, t.status,
            t."groupMessageId", t."channelMessageId",
            o.name AS "agencyName", o."telegramUsername" AS "agencyUsername",
-           o."postHeader", o."postFooter", o."groupChatId", o."channelChatId",
+           o."postHeader", o."postFooter", o."groupChatId", o."channelChatId", o."telegramUserId",
            COALESCE(o."postDestination", 'GROUP') AS "postDestination"
     FROM "TutoringOffer" t
     JOIN "Organization" o ON o.id = t."organizationId"`;
@@ -102,11 +103,24 @@ function targets(o: PostOffer): { kind: 'group' | 'channel'; chatId: number }[] 
     return list;
 }
 
+// After this many failed attempts, an offer stops being retried until someone resets it.
+const MAX_POST_FAILURES = 5;
+
+// The two buttons under every group or channel post.
+function offerButtons(o: PostOffer) {
+    return new InlineKeyboard()
+        .text('Close this offer', `close:${o.id}`)
+        .row()
+        .text('Stop reposting', `stop:${o.id}`);
+}
+
 // Posts every open offer that has never been posted, or is due for a repost.
 async function postDueOffers(bot: Bot): Promise<void> {
     const { rows } = await pool.query<PostOffer>(`
         ${OFFER_SELECT}
         WHERE t.status = 'OPEN'
+          AND t."repostStopped" = false
+          AND t."postFailures" < ${MAX_POST_FAILURES}
           AND (o."groupChatId" IS NOT NULL OR o."channelChatId" IS NOT NULL)
           AND (
               t."lastPostedToChannelAt" IS NULL
@@ -122,7 +136,7 @@ async function postDueOffers(bot: Bot): Promise<void> {
         for (const target of targets(o)) {
             try {
                 const message = await bot.api.sendMessage(target.chatId, cardText(o), {
-                    reply_markup: new InlineKeyboard().text('Close this offer', `close:${o.id}`),
+                    reply_markup: offerButtons(o),
                 });
                 if (target.kind === 'group') groupMessageId = message.message_id;
                 else channelMessageId = message.message_id;
@@ -131,16 +145,49 @@ async function postDueOffers(bot: Bot): Promise<void> {
             }
         }
 
-        if (groupMessageId === null && channelMessageId === null) continue;
+        if (groupMessageId !== null || channelMessageId !== null) {
+            await pool.query(
+                `UPDATE "TutoringOffer"
+                 SET "lastPostedToChannelAt" = now(),
+                     "groupMessageId" = COALESCE($2, "groupMessageId"),
+                     "channelMessageId" = COALESCE($3, "channelMessageId"),
+                     "postFailures" = 0
+                 WHERE id = $1`,
+                [o.id, groupMessageId, channelMessageId]
+            );
+            continue;
+        }
 
-        await pool.query(
-            `UPDATE "TutoringOffer"
-             SET "lastPostedToChannelAt" = now(),
-                 "groupMessageId" = COALESCE($2, "groupMessageId"),
-                 "channelMessageId" = COALESCE($3, "channelMessageId")
-             WHERE id = $1`,
-            [o.id, groupMessageId, channelMessageId]
+        // Nothing was posted. Count the failure.
+        const { rows: counted } = await pool.query(
+            `UPDATE "TutoringOffer" SET "postFailures" = "postFailures" + 1
+             WHERE id = $1 RETURNING "postFailures"`,
+            [o.id]
         );
+        const failures = Number(counted[0]?.postFailures ?? 0);
+        if (failures !== MAX_POST_FAILURES) continue;
+
+        // The offer has just paused. Tell the agency once.
+        console.error(`Offer ${o.id} paused after ${failures} failed posts.`);
+
+        if (!o.telegramUserId) {
+            console.error(
+                `Agency @${o.agencyUsername} has not opened the bot yet, so it could not be told that reposting paused.`
+            );
+            continue;
+        }
+
+        try {
+            await bot.api.sendMessage(
+                Number(o.telegramUserId),
+                `Reposting paused for "${o.title}".\n\n` +
+                `The bot could not post this offer to your group or channel ${failures} times in a row. ` +
+                'Check that the bot is still a member and an admin with permission to post there. ' +
+                'Then contact NextTutor to restart reposting.'
+            );
+        } catch (err) {
+            console.error(`Could not message agency @${o.agencyUsername} about paused offer ${o.id}:`, err);
+        }
     }
 }
 
@@ -178,6 +225,25 @@ export function registerRepostHandlers(bot: Bot) {
 
         await ctx.answerCallbackQuery({ text: 'Offer closed.' });
     });
+
+    // Only the agency that posted the offer can stop reposting it. The offer stays open.
+    bot.callbackQuery(/^stop:(.+)$/, async (ctx) => {
+        const o = await loadOffer(ctx.match[1]);
+
+        if (!o || o.agencyUsername.toLowerCase() !== (ctx.from.username ?? '').toLowerCase()) {
+            return ctx.answerCallbackQuery({
+                text: 'Only the agency that posted this offer can change it.',
+                show_alert: true,
+            });
+        }
+
+        await pool.query(`UPDATE "TutoringOffer" SET "repostStopped" = true WHERE id = $1`, [o.id]);
+
+        await ctx.answerCallbackQuery({ text: 'Reposting stopped. The offer stays open.' });
+        await ctx.editMessageReplyMarkup({
+            reply_markup: new InlineKeyboard().text('Close this offer', `close:${o.id}`),
+        });
+    });
 }
 
 // Checks every minute for offers to post or repost.
@@ -195,4 +261,30 @@ export function startRepostScheduler(bot: Bot) {
             running = false;
         }
     }, CHECK_EVERY_MS);
+}
+
+// Closes an offer and updates its group and channel posts. Used by the admin and leave approvals.
+export async function closeOfferEverywhere(api: Api, offerId: string): Promise<void> {
+    const o = await loadOffer(offerId);
+    if (!o) return;
+
+    await pool.query(
+        `UPDATE "TutoringOffer" SET status = 'CLOSED', "closedAt" = now() WHERE id = $1 AND status = 'OPEN'`,
+        [o.id]
+    );
+
+    const closedText = `${cardText(o)}\n\nCLOSED`;
+    const places = [
+        { chat: o.groupChatId, message: o.groupMessageId },
+        { chat: o.channelChatId, message: o.channelMessageId },
+    ];
+
+    for (const place of places) {
+        if (!place.chat || !place.message) continue;
+        try {
+            await api.editMessageText(Number(place.chat), Number(place.message), closedText);
+        } catch (err) {
+            console.error(`Could not mark offer ${o.id} closed in chat ${place.chat}:`, err);
+        }
+    }
 }

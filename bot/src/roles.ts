@@ -8,6 +8,7 @@ export const TUTOR_COMMANDS = [
     { command: 'search', description: 'Search open offers' },
     { command: 'settings', description: 'Alert and notification settings' },
     { command: 'gender', description: 'Change my gender' },
+    { command: 'feedback', description: 'Send feedback to NextTutor' },
     { command: 'help', description: 'List all functions' },
     { command: 'reset', description: 'Erase my data and start again' },
 ];
@@ -18,6 +19,8 @@ export const AGENCY_COMMANDS = [
     { command: 'new', description: 'Post a new tutoring offer' },
     { command: 'menu', description: 'Show the agency menu' },
     { command: 'help', description: 'List agency functions' },
+    { command: 'feedback', description: 'Send feedback to NextTutor' },
+    { command: 'leave', description: 'Request to leave NextTutor' },
 ];
 
 const CONTACT_USERNAME = process.env.REGISTER_CONTACT_USERNAME ?? 'admin_username';
@@ -32,7 +35,7 @@ export const AGENCY_HELP =
 export async function findAgencyByUsername(username: string | undefined) {
     if (!username) return null;
     const { rows } = await pool.query(
-        `SELECT id, name FROM "Organization" WHERE lower("telegramUsername") = lower($1)`,
+        `SELECT id, name FROM "Organization" WHERE lower("telegramUsername") = lower($1) AND status = 'ACTIVE'`,
         [username]
     );
     return rows[0] ?? null;
@@ -42,8 +45,16 @@ export async function isAgency(ctx: Context): Promise<boolean> {
     return (await findAgencyByUsername(ctx.from?.username)) !== null;
 }
 
-// Shows the agency menu and makes this chat's command list the agency one.
+// Shows the agency menu, saves the agency's Telegram ID so the bot can message them,
+// and makes this chat's command list the agency one.
 export async function showAgencyMenu(ctx: Context) {
+    if (ctx.from?.username) {
+        await pool.query(
+            `UPDATE "Organization" SET "telegramUserId" = $1 WHERE lower("telegramUsername") = lower($2)`,
+            [ctx.from.id, ctx.from.username]
+        );
+    }
+
     await ctx.api.setMyCommands(AGENCY_COMMANDS, {
         scope: { type: 'chat', chat_id: ctx.chat!.id },
     });

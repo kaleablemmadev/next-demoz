@@ -1,6 +1,7 @@
 import { Bot, InlineKeyboard } from 'grammy';
 import { pool } from './db.js';
 import { findMatchingOffers } from './offers.js';
+import { payLine, summaryLine } from './card.js';
 
 const DIGEST_HOUR = 8;          // 08:00 Addis Ababa time
 const CHECK_EVERY_MS = 5 * 60 * 1000;
@@ -45,11 +46,11 @@ async function digestRecipients(): Promise<number[]> {
           AND s."subCity" IS NOT NULL
           AND (s."pausedUntil" IS NULL OR s."pausedUntil" < now())
           AND NOT EXISTS (
-              SELECT 1 FROM "NotificationPreference" p
-              WHERE p."subscriberId" = s.id
-                AND p.category = 'OFFER_ALERTS'
-                AND p.enabled = false
-          )
+            SELECT 1 FROM "NotificationPreference" p
+            WHERE p."subscriberId" = s.id
+              AND p.category = 'OFFER_ALERTS'
+              AND p.enabled = false
+        )
     `);
     return rows.map((r) => Number(r.telegramId));
 }
@@ -74,8 +75,9 @@ export async function sendWeeklyDigest(bot: Bot, force = false): Promise<number>
         const lines = offers.slice(0, PREVIEW_LIMIT).map(
             (o, i) =>
                 `${i + 1}. ${o.title}\n` +
-                `   ${o.subjects.join(', ')} · ${o.gradeLevels.join(' & ')} · ${o.subCity}\n` +
-                `   ${o.monthlySalaryEtb.toLocaleString()} ETB · @${o.agencyUsername}`
+                `   ${summaryLine(o)}\n` +
+                `   ${payLine(o)}\n` +
+                `   Contact: @${o.agencyUsername}`
         );
 
         const more = offers.length > PREVIEW_LIMIT

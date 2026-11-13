@@ -1,5 +1,6 @@
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
+import { tutorLeaveKeyboard } from './leave.js';
 import { isAgency, showAgencyMenu, showRolePicker, AGENCY_HELP } from './roles.js';
 
 const MENU_TEXT =
@@ -90,8 +91,8 @@ export function registerMenuHandlers(bot: Bot) {
 
         await ctx.answerCallbackQuery();
         await ctx.editMessageText('All your data has been erased.');
-        await ctx.reply('Tap Start to register again.', {
-            reply_markup: new InlineKeyboard().text('Start', 'start:new'),
+        await ctx.reply('Before you go, why are you leaving NextTutor? This helps us improve the app.', {
+            reply_markup: tutorLeaveKeyboard(),
         });
     });
 

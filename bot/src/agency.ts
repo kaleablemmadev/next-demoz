@@ -46,7 +46,7 @@ async function findAgency(username: string | undefined) {
     if (!username) return null;
     const { rows } = await pool.query(
         `SELECT id, name, "telegramUsername", "postHeader", "postFooter"
-         FROM "Organization" WHERE lower("telegramUsername") = lower($1)`,
+         FROM "Organization" WHERE lower("telegramUsername") = lower($1) AND status = 'ACTIVE'`,
         [username]
     );
     return rows[0] ?? null;
