@@ -1,22 +1,11 @@
 import { Bot } from 'grammy';
 import { pool } from './db.js';
 import { tutorMatchesOffer } from '../../shared/rules/offer-match.js';
+import { offerCardText, type CardOffer } from './card.js';
 
-export type Agency = {
-    name: string;
-    telegramUsername: string;
-};
-
-export type AlertOffer = {
+export type AlertOffer = CardOffer & {
     id: string;
-    title: string;
-    subjects: string[];
-    gradeLevels: string[];
-    subCity: string;
-    monthlySalaryEtb: number;
-    sessionsPerWeek: number;
     status: 'OPEN' | 'CLOSED';
-    preferredTutorGender: 'MALE' | 'FEMALE' | null;
 };
 
 type Subscriber = {
@@ -46,26 +35,13 @@ async function alertableSubscribers(): Promise<Subscriber[]> {
     return rows;
 }
 
-function alertText(offer: AlertOffer, agency: Agency): string {
-    return [
-        'New tutoring offer',
-        '',
-        offer.title,
-        `${offer.subjects.join(', ')} · ${offer.gradeLevels.join(' & ')} · ${offer.subCity}`,
-        `${offer.sessionsPerWeek} sessions a week`,
-        `${offer.monthlySalaryEtb.toLocaleString()} ETB / month`,
-        '',
-        `Agency: ${agency.name}`,
-        `Contact: @${agency.telegramUsername}`,
-    ].join('\n');
-}
-
 // Sends the offer to every fully matching subscriber who hasn't had it yet.
 // Returns how many messages were sent.
-export async function sendOfferAlerts(bot: Bot, offer: AlertOffer, agency: Agency): Promise<number> {
+export async function sendOfferAlerts(bot: Bot, offer: AlertOffer): Promise<number> {
     if (offer.status !== 'OPEN') return 0;
 
     let sent = 0;
+    const text = offerCardText(offer);
 
     for (const sub of await alertableSubscribers()) {
         const matches = tutorMatchesOffer(
@@ -82,14 +58,14 @@ export async function sendOfferAlerts(bot: Bot, offer: AlertOffer, agency: Agenc
 
         const already = await pool.query(
             `SELECT 1 FROM "OfferDelivery" d
-             JOIN "TelegramSubscriber" s ON s.id = d."subscriberId"
+                               JOIN "TelegramSubscriber" s ON s.id = d."subscriberId"
              WHERE s."telegramId" = $1 AND d."offerId" = $2`,
             [sub.telegramId, offer.id]
         );
         if (already.rows.length > 0) continue;
 
         try {
-            await bot.api.sendMessage(sub.telegramId, alertText(offer, agency));
+            await bot.api.sendMessage(sub.telegramId, text);
         } catch (err) {
             // Usually means the tutor blocked the bot. Skip them and carry on.
             console.error(`Could not message ${sub.telegramId}:`, err);
@@ -99,7 +75,7 @@ export async function sendOfferAlerts(bot: Bot, offer: AlertOffer, agency: Agenc
         await pool.query(
             `INSERT INTO "OfferDelivery" ("subscriberId", "offerId")
              SELECT id, $2 FROM "TelegramSubscriber" WHERE "telegramId" = $1
-             ON CONFLICT DO NOTHING`,
+                 ON CONFLICT DO NOTHING`,
             [sub.telegramId, offer.id]
         );
         sent++;
