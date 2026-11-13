@@ -123,17 +123,6 @@ export function registerAgencyHandlers(bot: Bot) {
 
     bot.callbackQuery('ag:post:yes', async (ctx) => {
         const d = drafts.get(ctx.from.id);
-        // Post to the agency's group or channel, if one is linked.
-        if (d.channelChatId) {
-            try {
-                await bot.api.sendMessage(
-                    d.channelChatId,
-                    `New offer: ${d.subject} · ${d.gradeLevel} · ${d.subCity} · ${d.salary?.toLocaleString()} ETB / month`
-                );
-            } catch (err) {
-                console.error('Channel post failed:', err);
-            }
-        }
 
         await pool.query(
             `INSERT INTO "TutoringOffer"

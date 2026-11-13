@@ -11,6 +11,7 @@ import { sendPendingAlerts } from './publish.js';
 import { startDigestScheduler } from './digest.js';
 import { registerAgencyHandlers } from './agency.js';
 import { registerSettingsHandlers } from './settings.js';
+import { registerRepostHandlers, startRepostScheduler } from './reposts.js';
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const publicUrl = process.env.PUBLIC_URL;             // e.g. https://nextdemoz-bot.onrender.com
@@ -74,6 +75,7 @@ registerSalaryHandlers(bot);
 registerOfferHandlers(bot);
 registerAgencyHandlers(bot);
 registerSettingsHandlers(bot);
+registerRepostHandlers(bot);
 
 bot.catch((err) => console.error('Bot error:', err.error));
 
@@ -92,6 +94,7 @@ setInterval(async () => {
 }, 30_000);
 
 startDigestScheduler(bot);
+startRepostScheduler(bot);
 
 // Telegram sends each message here. Only requests with the right path and token are handled.
 const handleUpdate = webhookCallback(bot, 'http', { secretToken: tokenSecret });
