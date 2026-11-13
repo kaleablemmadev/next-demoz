@@ -53,7 +53,7 @@ export async function findMatchingOffers(telegramId: number): Promise<OpenOffer[
     );
 }
 
-function offerText(o: OpenOffer): string {
+export function offerText(o: OpenOffer): string {
     return [
         o.title,
         `${o.subjects.join(', ')} · ${o.gradeLevels.join(' & ')} · ${o.subCity}`,

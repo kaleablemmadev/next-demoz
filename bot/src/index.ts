@@ -12,6 +12,7 @@ import { startDigestScheduler } from './digest.js';
 import { registerAgencyHandlers } from './agency.js';
 import { registerSettingsHandlers } from './settings.js';
 import { registerGenderHandlers } from './gender.js';
+import { registerSearchHandlers } from './search.js';
 import { registerRepostHandlers, startRepostScheduler } from './reposts.js';
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -78,6 +79,7 @@ registerAgencyHandlers(bot);
 registerSettingsHandlers(bot);
 registerRepostHandlers(bot);
 registerGenderHandlers(bot);
+registerSearchHandlers(bot);
 
 bot.catch((err) => console.error('Bot error:', err.error));
 
