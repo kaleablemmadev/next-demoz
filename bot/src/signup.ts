@@ -6,33 +6,57 @@ import { isAdmin, ADMIN_USERNAME } from './admin.js';
 const ADMIN_TELEGRAM_ID = Number(process.env.ADMIN_TELEGRAM_ID ?? 0);
 const BOT_USERNAME = 'NextTutorBot';
 
+type Kind = 'GROUP' | 'CHANNEL';
+type Destination = Kind | 'BOTH';
+type Stage = 'DESTINATION' | 'NAME' | 'OWNER' | 'CHAT_USERNAME' | 'ADD_BOT' | 'CODE' | 'PAYMENT_REF';
+
 type Signup = {
     telegramId: string;
     telegramUsername: string | null;
-    step: 'DESTINATION' | 'NAME' | 'OWNER' | 'CHAT_USERNAME' | 'ADD_BOT' | 'CODE' | 'PAYMENT_REF';
-    destination: 'GROUP' | 'CHANNEL' | null;
+    step: Stage;
+    destination: Destination | null;
     businessName: string | null;
     ownerUsername: string | null;
-    chatUsername: string | null;
+};
+
+type ChatRow = {
+    kind: Kind;
+    username: string | null;
     chatId: string | null;
     code: string | null;
+    verified: boolean;
 };
+
+const KIND_ORDER: Kind[] = ['GROUP', 'CHANNEL'];
 
 const WELCOME = [
     'Welcome to NextTutor business registration.',
     '',
     'You will need:',
-    '• A Telegram group or channel for your tutoring offers',
+    '• A Telegram group, a channel, or both',
     '• The Telegram username of the business owner',
     '• Your business name',
-    `• @${BOT_USERNAME} added to your group or channel as an admin, with permission to post`,
+    `• @${BOT_USERNAME} added to each group or channel as an admin, with permission to post`,
     '',
     'Payment: ____ ETB (to be confirmed)',
     '',
     'Your business can post offers after the admin approves your payment.',
 ].join('\n');
 
-const SIGNUP_COLUMNS = ['step', 'destination', 'businessName', 'ownerUsername', 'chatUsername', 'chatId', 'code', 'paymentRef'];
+const SIGNUP_COLUMNS = ['step', 'destination', 'businessName', 'ownerUsername'];
+
+function label(kind: Kind): string {
+    return kind === 'GROUP' ? 'group' : 'channel';
+}
+
+function destinationLabel(d: Destination): string {
+    if (d === 'BOTH') return 'Telegram group and channel';
+    return d === 'GROUP' ? 'Telegram group' : 'Telegram channel';
+}
+
+function kindsFor(d: Destination): Kind[] {
+    return d === 'BOTH' ? ['GROUP', 'CHANNEL'] : [d];
+}
 
 function cleanUsername(raw: string): string | null {
     const u = raw.trim().replace(/^@/, '');
@@ -42,22 +66,79 @@ function cleanUsername(raw: string): string | null {
 async function getSignup(telegramId: number): Promise<Signup | null> {
     const { rows } = await pool.query<Signup>(
         `SELECT "telegramId"::text AS "telegramId", "telegramUsername", step, destination,
-                "businessName", "ownerUsername", "chatUsername", "chatId"::text AS "chatId", code
+                "businessName", "ownerUsername"
          FROM "BusinessSignup" WHERE "telegramId" = $1`,
         [telegramId]
     );
     return rows[0] ?? null;
 }
 
+async function getChats(telegramId: number): Promise<ChatRow[]> {
+    const { rows } = await pool.query<ChatRow>(
+        `SELECT kind, username, "chatId"::text AS "chatId", code, verified
+         FROM "SignupChat" WHERE "telegramId" = $1`,
+        [telegramId]
+    );
+    return rows.sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind));
+}
+
 // Only fixed column names are accepted, so the query text is safe.
 async function updateSignup(telegramId: number, fields: Record<string, string | null>) {
-    const keys = Object.keys(fields).filter((k) => SIGNUP_COLUMNS.includes(k));
+    const keys = Object.keys(fields).filter((k) => SIGNUP_COLUMNS.includes(k) || k === 'step');
     if (keys.length === 0) return;
     const sets = keys.map((k, i) => `"${k}" = $${i + 2}`).join(', ');
     await pool.query(
         `UPDATE "BusinessSignup" SET ${sets}, "updatedAt" = now() WHERE "telegramId" = $1`,
         [telegramId, ...keys.map((k) => fields[k])]
     );
+}
+
+// Works out which step comes next from the saved chats.
+function stageOf(chats: ChatRow[]): Stage {
+    if (chats.some((c) => !c.username)) return 'CHAT_USERNAME';
+    if (chats.some((c) => !c.chatId)) return 'ADD_BOT';
+    if (chats.some((c) => !c.verified)) return 'CODE';
+    return 'PAYMENT_REF';
+}
+
+async function advance(telegramId: number): Promise<{ stage: Stage; chats: ChatRow[] }> {
+    const chats = await getChats(telegramId);
+    const stage = stageOf(chats);
+    await updateSignup(telegramId, { step: stage });
+    return { stage, chats };
+}
+
+function promptFor(stage: Stage, chats: ChatRow[]): string {
+    if (stage === 'CHAT_USERNAME') {
+        const next = chats.find((c) => !c.username)!;
+        return `What is the username of your ${label(next.kind)}? For example @mytutors.`;
+    }
+    if (stage === 'ADD_BOT') {
+        const next = chats.find((c) => !c.chatId)!;
+        return `Now add @${BOT_USERNAME} to your ${label(next.kind)} as an admin, with permission to post messages. I will confirm automatically when it is added.`;
+    }
+    if (stage === 'CODE') {
+        const waiting = chats.filter((c) => !c.verified).map((c) => label(c.kind));
+        return `Type the setup code shown in your ${waiting.join(' and ')}.`;
+    }
+    return '';
+}
+
+function ownerTemplate(s: Signup, chats: ChatRow[]): string {
+    const chatLines = chats.map((c) => `${c.kind === 'GROUP' ? 'Group' : 'Channel'}: @${c.username}`);
+    return [
+        'Hello, I am registering a tutoring business on NextTutor.',
+        '',
+        `Business name: ${s.businessName}`,
+        `Business account: @${s.telegramUsername}`,
+        `Owner: @${s.ownerUsername}`,
+        ...chatLines,
+        'Ownership: confirmed through the NextTutor bot',
+        '',
+        'Payment: ____ ETB',
+        '',
+        'Please confirm once the payment is received so my account can be approved.',
+    ].join('\n');
 }
 
 async function notifyAdmin(ctx: Context, text: string, keyboard?: InlineKeyboard) {
@@ -76,22 +157,6 @@ function approvalButtons(orgId: string) {
     return new InlineKeyboard()
         .text('Approve', `signup:approve:${orgId}`)
         .text('Reject', `signup:reject:${orgId}`);
-}
-
-function ownerTemplate(s: Signup): string {
-    return [
-        'Hello, I am registering a tutoring business on NextTutor.',
-        '',
-        `Business name: ${s.businessName}`,
-        `Business account: @${s.telegramUsername}`,
-        `Owner: @${s.ownerUsername}`,
-        `${s.destination === 'CHANNEL' ? 'Channel' : 'Group'}: @${s.chatUsername}`,
-        `Ownership code: ${s.code}`,
-        '',
-        'Payment: ____ ETB',
-        '',
-        'Please confirm once the payment is received so my account can be approved.',
-    ].join('\n');
 }
 
 // Called from roles.ts when someone who is not a registered business taps "I am a tutoring business".
@@ -113,13 +178,13 @@ export async function startBusinessSignup(ctx: Context) {
         return ctx.reply('This business cannot register again here. Please contact NextTutor.');
     }
 
+    await pool.query(`DELETE FROM "SignupChat" WHERE "telegramId" = $1`, [ctx.from!.id]);
     await pool.query(
         `INSERT INTO "BusinessSignup" ("telegramId", "telegramUsername", step)
          VALUES ($1, $2, 'DESTINATION')
-             ON CONFLICT ("telegramId") DO UPDATE SET
+         ON CONFLICT ("telegramId") DO UPDATE SET
             "telegramUsername" = EXCLUDED."telegramUsername", step = 'DESTINATION',
-                                               destination = NULL, "businessName" = NULL, "ownerUsername" = NULL,
-                                               "chatUsername" = NULL, "chatId" = NULL, code = NULL, "updatedAt" = now()`,
+            destination = NULL, "businessName" = NULL, "ownerUsername" = NULL, "updatedAt" = now()`,
         [ctx.from!.id, username]
     );
 
@@ -127,8 +192,9 @@ export async function startBusinessSignup(ctx: Context) {
     return ctx.reply('Where will you post your offers?', {
         reply_markup: new InlineKeyboard()
             .text('Telegram group', 'biz:dest:GROUP')
+            .text('Telegram channel', 'biz:dest:CHANNEL')
             .row()
-            .text('Telegram channel', 'biz:dest:CHANNEL'),
+            .text('Both group and channel', 'biz:dest:BOTH'),
     });
 }
 
@@ -147,27 +213,40 @@ function adminCallback(handler: (ctx: Context) => Promise<unknown>) {
 }
 
 // Saves the business, sends it to the admin for approval, and clears the registration.
-async function finishSignup(ctx: Context, s: Signup, paymentRef: string) {
+async function finishSignup(ctx: Context, s: Signup, chats: ChatRow[], paymentRef: string) {
+    const group = chats.find((c) => c.kind === 'GROUP');
+    const channel = chats.find((c) => c.kind === 'CHANNEL');
     const orgId = randomUUID();
-    const chatColumn = s.destination === 'CHANNEL' ? 'channelChatId' : 'groupChatId';
 
     await pool.query(
         `INSERT INTO "Organization"
          (id, name, "telegramUsername", "telegramUserId", "ownerUsername", "paymentReference",
-          "${chatColumn}", "postDestination", status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'PENDING_APPROVAL')`,
-        [orgId, s.businessName, s.telegramUsername, Number(s.telegramId), s.ownerUsername, paymentRef, s.chatId, s.destination]
+          "groupChatId", "channelChatId", "postDestination", status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'PENDING_APPROVAL')`,
+        [
+            orgId,
+            s.businessName,
+            s.telegramUsername,
+            Number(s.telegramId),
+            s.ownerUsername,
+            paymentRef,
+            group?.chatId ?? null,
+            channel?.chatId ?? null,
+            s.destination,
+        ]
     );
+    await pool.query(`DELETE FROM "SignupChat" WHERE "telegramId" = $1`, [s.telegramId]);
     await pool.query(`DELETE FROM "BusinessSignup" WHERE "telegramId" = $1`, [s.telegramId]);
 
+    const chatLines = chats.map((c) => `${c.kind === 'GROUP' ? 'Group' : 'Channel'}: @${c.username}`);
     await notifyAdmin(
         ctx,
         `New business waiting for approval\n\n` +
         `Name: ${s.businessName}\n` +
         `Business account: @${s.telegramUsername}\n` +
         `Owner: @${s.ownerUsername}\n` +
-        `${s.destination === 'CHANNEL' ? 'Channel' : 'Group'}: @${s.chatUsername}\n` +
-        `Payment reference: ${paymentRef}`,
+        chatLines.join('\n') +
+        `\nPayment reference: ${paymentRef}`,
         approvalButtons(orgId)
     );
 
@@ -193,38 +272,51 @@ export function registerSignupHandlers(bot: Bot) {
     );
 
     // Destination choice
-    bot.callbackQuery(/^biz:dest:(GROUP|CHANNEL)$/, async (ctx) => {
-        const destination = ctx.match[1];
+    bot.callbackQuery(/^biz:dest:(GROUP|CHANNEL|BOTH)$/, async (ctx) => {
+        const destination = ctx.match[1] as Destination;
         await ctx.answerCallbackQuery();
 
         const s = await getSignup(ctx.from.id);
         if (!s || s.step !== 'DESTINATION') return ctx.reply('Send /start to register your business.');
 
+        await pool.query(`DELETE FROM "SignupChat" WHERE "telegramId" = $1`, [ctx.from.id]);
+        for (const kind of kindsFor(destination)) {
+            await pool.query(`INSERT INTO "SignupChat" ("telegramId", kind) VALUES ($1, $2)`, [ctx.from.id, kind]);
+        }
         await updateSignup(ctx.from.id, { destination, step: 'NAME' });
-        await ctx.editMessageText(`Destination: Telegram ${destination === 'CHANNEL' ? 'channel' : 'group'}`);
+
+        await ctx.editMessageText(`Destination: ${destinationLabel(destination)}`);
         return ctx.reply('What is your business name?');
     });
 
-    // The bot was added to a group or channel. When it is an admin there, the setup code is posted.
+    // The bot was added to a group or channel as an admin. It binds the chat and posts the setup code.
     bot.on('my_chat_member', async (ctx) => {
         const update = ctx.myChatMember;
         if (update.new_chat_member.user.id !== ctx.me.id) return;
         if (update.new_chat_member.status !== 'administrator') return;
 
-        const s = await getSignup(update.from.id);
+        const telegramId = update.from.id;
+        const s = await getSignup(telegramId);
         if (!s || s.step !== 'ADD_BOT') return;
 
-        const kind = s.destination === 'CHANNEL' ? 'channel' : 'group';
-        const isChannel = ctx.chat.type === 'channel';
-        const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
-        if ((kind === 'channel' && !isChannel) || (kind === 'group' && !isGroup)) {
-            return ctx.api.sendMessage(update.from.id, `That is not a ${kind}. Add the bot to your ${kind} as an admin.`);
+        const chats = await getChats(telegramId);
+        const kind: Kind | null =
+            ctx.chat.type === 'channel' ? 'CHANNEL'
+                : ctx.chat.type === 'group' || ctx.chat.type === 'supergroup' ? 'GROUP'
+                    : null;
+        const target = chats.find((c) => c.kind === kind && !c.chatId && c.username);
+
+        if (!target) {
+            return ctx.api.sendMessage(
+                telegramId,
+                'This group or channel is not one of the chats you are registering. Add the bot to the one you gave me.'
+            );
         }
 
-        if (ctx.chat.username && s.chatUsername && ctx.chat.username.toLowerCase() !== s.chatUsername.toLowerCase()) {
+        if (ctx.chat.username && target.username && ctx.chat.username.toLowerCase() !== target.username.toLowerCase()) {
             return ctx.api.sendMessage(
-                update.from.id,
-                `That is @${ctx.chat.username}, but you gave @${s.chatUsername}. Add the bot to the right ${kind}.`
+                telegramId,
+                `That is @${ctx.chat.username}, but you gave @${target.username}. Add the bot to the right ${label(target.kind)}.`
             );
         }
 
@@ -233,19 +325,24 @@ export function registerSignupHandlers(bot: Bot) {
             [ctx.chat.id]
         );
         if (rows.length > 0) {
-            return ctx.api.sendMessage(update.from.id, 'This group or channel is already registered with NextTutor.');
+            return ctx.api.sendMessage(telegramId, 'This group or channel is already registered with NextTutor.');
         }
 
         const code = String(randomInt(100000, 1000000));
-        await updateSignup(update.from.id, { chatId: String(ctx.chat.id), code, step: 'CODE' });
+        await pool.query(
+            `UPDATE "SignupChat" SET "chatId" = $3, code = $4 WHERE "telegramId" = $1 AND kind = $2`,
+            [telegramId, target.kind, ctx.chat.id, code]
+        );
 
         await ctx.api.sendMessage(
             ctx.chat.id,
             `NextTutor setup code: ${code}\n\nThe owner should enter this code in a private chat with @${BOT_USERNAME}.`
         );
+
+        const { stage, chats: updated } = await advance(telegramId);
         return ctx.api.sendMessage(
-            update.from.id,
-            `The bot is an admin in your ${kind}. Type the setup code shown there, here.`
+            telegramId,
+            `The bot is an admin in your ${label(target.kind)}. ${promptFor(stage, updated)}`
         );
     });
 
@@ -326,53 +423,75 @@ export function registerSignupHandlers(bot: Bot) {
         const text = ctx.message.text.trim();
         if (text.startsWith('/')) return next();
 
-        const s = await getSignup(ctx.from.id);
+        const telegramId = ctx.from.id;
+        const s = await getSignup(telegramId);
         if (!s) return next();
-
-        const kind = s.destination === 'CHANNEL' ? 'channel' : 'group';
 
         if (s.step === 'NAME') {
             if (text.length < 2 || text.length > 100) {
                 return ctx.reply('Please type a business name between 2 and 100 characters.');
             }
-            await updateSignup(ctx.from.id, { businessName: text, step: 'OWNER' });
+            await updateSignup(telegramId, { businessName: text, step: 'OWNER' });
             return ctx.reply("What is the owner's Telegram username? For example @owner_name.");
         }
 
         if (s.step === 'OWNER') {
             const owner = cleanUsername(text);
             if (!owner) return ctx.reply('That is not a valid Telegram username. For example @owner_name.');
-            await updateSignup(ctx.from.id, { ownerUsername: owner, step: 'CHAT_USERNAME' });
-            return ctx.reply(`What is the username of your ${kind}? For example @mytutors.`);
+            await updateSignup(telegramId, { ownerUsername: owner });
+            const { stage, chats } = await advance(telegramId);
+            return ctx.reply(promptFor(stage, chats));
         }
 
         if (s.step === 'CHAT_USERNAME') {
-            const chat = cleanUsername(text);
-            if (!chat) return ctx.reply(`That is not a valid ${kind} username. For example @mytutors.`);
-            await updateSignup(ctx.from.id, { chatUsername: chat, step: 'ADD_BOT' });
-            return ctx.reply(
-                `Now add @${BOT_USERNAME} to your ${kind} as an admin, with permission to post messages. ` +
-                'I will confirm automatically when it is added.'
+            const chats = await getChats(telegramId);
+            const next = chats.find((c) => !c.username);
+            if (!next) {
+                const after = await advance(telegramId);
+                return ctx.reply(promptFor(after.stage, after.chats));
+            }
+            const chatUsername = cleanUsername(text);
+            if (!chatUsername) {
+                return ctx.reply(`That is not a valid ${label(next.kind)} username. For example @mytutors.`);
+            }
+            await pool.query(
+                `UPDATE "SignupChat" SET username = $3 WHERE "telegramId" = $1 AND kind = $2`,
+                [telegramId, next.kind, chatUsername]
             );
+            const { stage, chats: updated } = await advance(telegramId);
+            return ctx.reply(promptFor(stage, updated));
         }
 
         if (s.step === 'ADD_BOT') {
-            return ctx.reply(`Waiting for the bot to be added as an admin to your ${kind}.`);
+            const chats = await getChats(telegramId);
+            return ctx.reply(promptFor('ADD_BOT', chats));
         }
 
         if (s.step === 'CODE') {
-            if (text !== s.code) {
-                return ctx.reply(`That code is not right. Check the ${kind} and try again.`);
+            const chats = await getChats(telegramId);
+            const match = chats.find((c) => !c.verified && c.code === text);
+            if (!match) {
+                return ctx.reply('That code is not right. Check the group or channel and try again.');
             }
-            await updateSignup(ctx.from.id, { step: 'PAYMENT_REF' });
-            await ctx.reply(`Ownership confirmed. Copy this message and send it to @${ADMIN_USERNAME} on Telegram:`);
-            await ctx.reply(ownerTemplate(s));
-            return ctx.reply('Then reply here with your payment reference or transaction number.');
+
+            await pool.query(
+                `UPDATE "SignupChat" SET verified = true WHERE "telegramId" = $1 AND kind = $2`,
+                [telegramId, match.kind]
+            );
+            const { stage, chats: updated } = await advance(telegramId);
+
+            if (stage === 'PAYMENT_REF') {
+                await ctx.reply(`Ownership confirmed. Copy this message and send it to @${ADMIN_USERNAME} on Telegram:`);
+                await ctx.reply(ownerTemplate(s, updated));
+                return ctx.reply('Then reply here with your payment reference or transaction number.');
+            }
+            return ctx.reply(`${label(match.kind)} confirmed. ${promptFor(stage, updated)}`);
         }
 
         if (s.step === 'PAYMENT_REF') {
             if (text.length < 3) return ctx.reply('Please type the payment reference or transaction number.');
-            return finishSignup(ctx, s, text.slice(0, 200));
+            const chats = await getChats(telegramId);
+            return finishSignup(ctx, s, chats, text.slice(0, 200));
         }
 
         return next();
