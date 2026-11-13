@@ -1,5 +1,6 @@
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
+import { isAdmin, showAdminMenu } from './admin.js';
 
 // Commands tutors see. This is the default list for every chat.
 export const TUTOR_COMMANDS = [
@@ -78,6 +79,8 @@ export function registerRoleHandlers(
     bot.api.setMyCommands(TUTOR_COMMANDS).catch((err) => console.error('setMyCommands failed:', err));
 
     bot.command('start', async (ctx) => {
+        if (isAdmin(ctx)) return showAdminMenu(ctx);
+
         const agency = await findAgencyByUsername(ctx.from?.username);
         if (agency) return showAgencyMenu(ctx);
         return showRolePicker(ctx, ctx.match?.toString().trim() || 'direct');
