@@ -160,9 +160,11 @@ export function registerSearchHandlers(bot: Bot) {
         await ctx.answerCallbackQuery();
 
         const { rows } = await pool.query(`
-            SELECT t.id, t.title, t.subjects, t."gradeLevels", t."subCity", t."monthlySalaryEtb",
-                   t."sessionsPerWeek", t."preferredTutorGender",
-                   o.name AS "agencyName", o."telegramUsername" AS "agencyUsername"
+            SELECT t.id, t.title, t.subjects, t."gradeLevels", t."subCity", t."locationDetail",
+                   t."sessionsPerWeek", t."sessionHours", t."salaryUnit", t."salaryAmountEtb",
+                   t."monthlySalaryEtb", t."preferredTutorGender", t.requirements,
+                   o."postHeader", o."postFooter", o.name AS "agencyName",
+                   o."telegramUsername" AS "agencyUsername"
             FROM "TutoringOffer" t
             JOIN "Organization" o ON o.id = t."organizationId"
             WHERE t.status = 'OPEN'
