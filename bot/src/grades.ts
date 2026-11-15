@@ -1,8 +1,9 @@
+// src/grades.ts
+
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
 import { askGender } from './gender.js';
-
-export const GRADES = ['Grade 4', 'Grade 8', 'Grade 11'];
+import { GRADES } from './curriculum.js';
 
 async function selectedGrades(telegramId: number): Promise<string[]> {
     const { rows } = await pool.query(

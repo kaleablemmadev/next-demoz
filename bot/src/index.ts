@@ -1,3 +1,5 @@
+// src/index.ts
+
 import 'dotenv/config';
 import http from 'node:http';
 import type { Context } from 'grammy';

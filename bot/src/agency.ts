@@ -1,8 +1,10 @@
+// src/agency.ts
+
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
 import { KNOWN_SUB_CITIES } from '../../shared/rules/nearby-areas.js';
 import { SUBJECTS } from './subjects.js';
-import { GRADES } from './grades.js';
+import { GRADES } from './curriculum.js';
 
 type Unit = 'MONTH' | 'HOUR';
 type Gender = 'MALE' | 'FEMALE' | null;
@@ -76,13 +78,13 @@ function hourlyOf(d: Draft): number {
 }
 
 // Shows "All Subjects" when every option is picked, the list otherwise, and emptyLabel when none.
-function listLabel(items: string[], all: string[], allLabel: string, emptyLabel: string): string {
+function listLabel(items: string[], all: readonly string[], allLabel: string, emptyLabel: string): string {
     if (items.length === 0) return emptyLabel;
     if (all.every((x) => items.includes(x))) return allLabel;
     return items.join(', ');
 }
 
-function multiKeyboard(kind: string, options: string[], selected: string[]) {
+function multiKeyboard(kind: string, options: readonly string[], selected: string[]) {
     const kb = new InlineKeyboard();
     options.forEach((v, i) => {
         kb.text(`${selected.includes(v) ? '✅ ' : ''}${v}`, `ag:${kind}:${v}`);

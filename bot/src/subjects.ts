@@ -1,8 +1,11 @@
+// src/subjects.ts
+
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
 import { askGrades } from './grades.js';
 
-export const SUBJECTS = ['Mathematics', 'Physics', 'English', 'Chemistry'];
+import { SUBJECTS } from './curriculum.js';
+export { SUBJECTS };
 
 async function selectedSubjects(telegramId: number): Promise<string[]> {
     const { rows } = await pool.query(

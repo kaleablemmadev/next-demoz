@@ -1,14 +1,16 @@
+// src/search.ts
+
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
 import { KNOWN_SUB_CITIES } from '../../shared/rules/nearby-areas.js';
 import { offerMatchesSearch, type SearchFilters } from '../../shared/rules/search.js';
 import { SUBJECTS } from './subjects.js';
-import { GRADES } from './grades.js';
+import { GRADES } from './curriculum.js';
 import { offerText, type OpenOffer } from './offers.js';
 
 type Field = 'subjects' | 'grades' | 'areas';
 
-const OPTIONS: Record<Field, string[]> = {
+const OPTIONS: Record<Field, readonly string[]> = {
     subjects: SUBJECTS,
     grades: GRADES,
     areas: KNOWN_SUB_CITIES,
