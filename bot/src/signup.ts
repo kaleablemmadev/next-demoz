@@ -1,3 +1,5 @@
+// src/signup.ts
+
 import { Bot, InlineKeyboard, type Context, type Api } from 'grammy';
 import { randomInt, randomUUID } from 'node:crypto';
 import { offerCardText, type CardOffer } from './card.js';
@@ -39,7 +41,7 @@ const WELCOME = [
     '• Your business name',
     `• @${BOT_USERNAME} added to each group or channel as an admin, with permission to post`,
     '',
-    'Payment: ____ ETB (to be confirmed)',
+    'Payment: Free',
     '',
     'Your business can post offers after the admin approves your payment.',
 ].join('\n');

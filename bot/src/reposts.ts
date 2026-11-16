@@ -1,6 +1,8 @@
+// src/reposts.ts
+
 import { pool } from './db.js';
 import { SUBJECTS } from './subjects.js';
-import { GRADES } from './grades.js';
+import { GRADES } from './curriculum.js';
 import { Bot, InlineKeyboard, type Api } from 'grammy';
 
 const CHECK_EVERY_MS = 60 * 1000;
@@ -51,7 +53,7 @@ async function loadOffer(id: string): Promise<PostOffer | null> {
 }
 
 // "All Subjects" when every option is included, the list otherwise.
-function listLabel(items: string[], all: string[], allLabel: string): string {
+function listLabel(items: string[], all: readonly string[], allLabel: string): string {
     if (items.length === 0 || all.every((x) => items.includes(x))) return allLabel;
     return items.join(', ');
 }

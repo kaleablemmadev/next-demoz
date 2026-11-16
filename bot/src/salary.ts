@@ -1,3 +1,5 @@
+// src/salary.ts
+
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
 
@@ -7,6 +9,12 @@ export const SALARY_OPTIONS: { label: string; value: number | null }[] = [
     { label: '2,000+ ETB', value: 2000 },
     { label: '2,500+ ETB', value: 2500 },
     { label: '3,000+ ETB', value: 3000 },
+    { label: '3,500+ ETB', value: 3500 },
+    { label: '4,000+ ETB', value: 4000 },
+    { label: '4,500+ ETB', value: 4500 },
+    { label: '5,000+ ETB', value: 5000 },
+    { label: '5,500+ ETB', value: 5500 },
+    { label: '6,000+ ETB', value: 6000 },
 ];
 
 export async function askSalary(ctx: Context) {

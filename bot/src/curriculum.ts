@@ -1,3 +1,5 @@
+// src/curriculum.ts
+
 // Source: Curriculum Framework for Ethiopian Education (KG–Grade 12), MoE, May 2009.
 // Grades 11–12 combine both streams. Update if the current syllabus changes.
 

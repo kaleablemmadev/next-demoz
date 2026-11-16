@@ -2,12 +2,9 @@
 
 import 'dotenv/config';
 import http from 'node:http';
-import { WELCOME_MESSAGE } from './welcome.js';
-import type { Context } from 'grammy';
-import { Bot, InlineKeyboard, webhookCallback } from 'grammy';
-import { pool } from './db.js';
-import { KNOWN_SUB_CITIES } from '../../shared/rules/nearby-areas.js';
-import { askSubjects, registerSubjectHandlers } from './subjects.js';
+import { Bot, webhookCallback } from 'grammy';
+import { registerSubjectHandlers } from './subjects.js';
+import { registerOnboardingHandlers, startTutorOnboarding } from './onboarding.js';
 import { registerGradeHandlers } from './grades.js';
 import { registerSalaryHandlers } from './salary.js';
 import { registerOfferHandlers } from './offers.js';
@@ -17,13 +14,14 @@ import { registerAgencyHandlers } from './agency.js';
 import { registerSettingsHandlers } from './settings.js';
 import { registerGenderHandlers } from './gender.js';
 import { registerMenuHandlers } from './menu.js';
-import {registerAdminHandlers} from "./admin";
+import {registerAdminHandlers} from "./admin.js";
 import { registerSignupHandlers } from './signup.js';
 import { registerRoleHandlers } from './roles.js';
 import { registerLeaveHandlers } from './leave.js';
 import { registerSearchHandlers } from './search.js';
 import { registerGenderSettingsHandlers } from './gender-settings.js';
 import { registerRepostHandlers, startRepostScheduler } from './reposts.js';
+import { registerWelcomeHandlers } from './welcome.js';
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const publicUrl = process.env.PUBLIC_URL;             // e.g. https://nextdemoz-bot.onrender.com
@@ -44,44 +42,11 @@ bot.use(async (ctx, next) => {
     await next();
 });
 
-// /start, optionally with the channel that sent them: t.me/NextTutorBot?start=channelname
-// Also used by the Start button after a reset, so it must work without a /start message.
-async function startOnboarding(ctx: Context, source = 'direct') {
-    const from = ctx.from!;
-
-    await pool.query(
-        `INSERT INTO "TelegramSubscriber" ("telegramId", "firstName", "username", "sourceChannel")
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT ("telegramId") DO NOTHING`,
-        [from.id, from.first_name ?? null, from.username ?? null, source]
-    );
-
-    const keyboard = new InlineKeyboard();
-    KNOWN_SUB_CITIES.forEach((city, i) => {
-        keyboard.text(city, `area:${city}`);
-        if (i % 2 === 1) keyboard.row();
-    });
-
-    await ctx.reply('Welcome to NextTutor alerts. Which sub-city do you teach in?', {
-        reply_markup: keyboard,
-    });
-}
-
-// The tutor tapped a sub-city.
-bot.callbackQuery(/^area:(.+)$/, async (ctx) => {
-    const subCity = ctx.match[1];
-
-    await pool.query(
-        `UPDATE "TelegramSubscriber" SET "subCity" = $1 WHERE "telegramId" = $2`,
-        [subCity, ctx.from.id]
-    );
-
-    await ctx.answerCallbackQuery();
-    await ctx.editMessageText(`Saved: ${subCity}.`);
-    await askSubjects(ctx);
-});
+registerOnboardingHandlers(bot);
 
 bot.on('callback_query:data', (ctx, next) => { console.log('Button pressed:', ctx.callbackQuery.data); return next(); });
+
+registerWelcomeHandlers(bot);
 
 registerAdminHandlers(bot);
 registerSignupHandlers(bot);
@@ -94,7 +59,7 @@ registerSettingsHandlers(bot);
 registerRepostHandlers(bot);
 registerGenderHandlers(bot);
 registerSearchHandlers(bot);
-registerRoleHandlers(bot, startOnboarding);
+registerRoleHandlers(bot, startTutorOnboarding);
 registerMenuHandlers(bot);
 registerLeaveHandlers(bot);
 registerGenderSettingsHandlers(bot);

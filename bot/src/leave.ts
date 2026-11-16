@@ -1,3 +1,5 @@
+// src/leave.ts
+
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
 import { findAgencyByUsername } from './roles.js';

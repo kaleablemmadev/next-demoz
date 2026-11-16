@@ -1,3 +1,5 @@
+// src/admin.ts
+
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { randomUUID } from 'node:crypto';
 import { pool } from './db.js';

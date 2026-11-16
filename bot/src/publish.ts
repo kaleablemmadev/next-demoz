@@ -1,3 +1,5 @@
+// src/publish.ts
+
 import { Bot } from 'grammy';
 import { pool } from './db.js';
 import { sendOfferAlerts, type AlertOffer } from './alerts.js';

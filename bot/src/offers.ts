@@ -1,3 +1,5 @@
+// src/offers.ts
+
 import { Bot, type Context } from 'grammy';
 import { pool } from './db.js';
 import { tutorMatchesOffer } from '../../shared/rules/offer-match.js';

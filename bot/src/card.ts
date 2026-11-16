@@ -1,5 +1,7 @@
+// src/card.ts
+
 import { SUBJECTS } from './subjects.js';
-import { GRADES } from './grades.js';
+import { GRADES } from './curriculum.js';
 
 const WEEKS_PER_MONTH = 4.33;
 
@@ -27,7 +29,7 @@ function roundTo(value: number, step: number): number {
 }
 
 // "All Subjects" when every option is included, the list otherwise.
-function listLabel(items: string[], all: string[], allLabel: string): string {
+function listLabel(items: string[], all: readonly string[], allLabel: string): string {
     if (items.length === 0 || all.every((x) => items.includes(x))) return allLabel;
     return items.join(', ');
 }

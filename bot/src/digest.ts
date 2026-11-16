@@ -1,3 +1,5 @@
+// src/digest.ts
+
 import { Bot, InlineKeyboard } from 'grammy';
 import { pool } from './db.js';
 import { findMatchingOffers } from './offers.js';

@@ -1,3 +1,5 @@
+// src/gender.ts
+
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
 import { askSalary } from './salary.js';

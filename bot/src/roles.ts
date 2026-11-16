@@ -1,3 +1,5 @@
+// src/roles.ts
+
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
 import { isAdmin, showAdminMenu } from './admin.js';
