@@ -2,6 +2,7 @@ import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
 import { tutorLeaveKeyboard } from './leave.js';
 import { isAgency, showAgencyMenu, showRolePicker, AGENCY_HELP } from './roles.js';
+import { WELCOME_MESSAGE } from './welcome.js';
 
 const MENU_TEXT =
     'NextTutor menu\n\n' +
@@ -98,6 +99,7 @@ export function registerMenuHandlers(bot: Bot) {
 
     bot.callbackQuery('start:new', async (ctx) => {
         await ctx.answerCallbackQuery();
+        await ctx.reply(WELCOME_MESSAGE);
         await showRolePicker(ctx);
     });
 }

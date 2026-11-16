@@ -2,6 +2,7 @@
 
 import 'dotenv/config';
 import http from 'node:http';
+import { WELCOME_MESSAGE } from './welcome.js';
 import type { Context } from 'grammy';
 import { Bot, InlineKeyboard, webhookCallback } from 'grammy';
 import { pool } from './db.js';
