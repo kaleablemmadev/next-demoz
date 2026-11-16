@@ -1,7 +1,7 @@
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
 import { KNOWN_SUB_CITIES } from '../../shared/rules/nearby-areas.js';
-import { askSubjects } from './subjects.js';
+import { askGrades } from './grades.js';
 
 export async function startTutorOnboarding(ctx: Context, source = 'direct') {
     const from = ctx.from!;
@@ -35,6 +35,6 @@ export function registerOnboardingHandlers(bot: Bot) {
 
         await ctx.answerCallbackQuery();
         await ctx.editMessageText(`Saved: ${subCity}.`);
-        await askSubjects(ctx);
+        await askGrades(ctx);
     });
 }

@@ -2,9 +2,9 @@
 
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
-import { askGrades } from './grades.js';
+import { askGender } from './gender.js';
 
-import { SUBJECTS } from './curriculum.js';
+import { SUBJECTS, subjectsForGrades } from './curriculum.js';
 export { SUBJECTS };
 
 async function selectedSubjects(telegramId: number): Promise<string[]> {
@@ -15,9 +15,17 @@ async function selectedSubjects(telegramId: number): Promise<string[]> {
     return rows[0]?.subjects ?? [];
 }
 
-function subjectKeyboard(selected: string[]) {
+async function selectedGrades(telegramId: number): Promise<string[]> {
+    const { rows } = await pool.query(
+        `SELECT grades FROM "TelegramSubscriber" WHERE "telegramId" = $1`,
+        [telegramId]
+    );
+    return rows[0]?.grades ?? [];
+}
+
+function subjectKeyboard(subjects: string[], selected: string[]) {
     const kb = new InlineKeyboard();
-    SUBJECTS.forEach((s, i) => {
+    subjects.forEach((s, i) => {
         kb.text(`${selected.includes(s) ? '✅ ' : ''}${s}`, `subj:${s}`);
         if (i % 2 === 1) kb.row();
     });
@@ -27,34 +35,51 @@ function subjectKeyboard(selected: string[]) {
 }
 
 export async function askSubjects(ctx: Context) {
-    const selected = await selectedSubjects(ctx.from!.id);
-    await ctx.reply('Which subjects do you teach? Pick one or more, or tap All subjects.', {
-        reply_markup: subjectKeyboard(selected),
-    });
+    const id = ctx.from!.id;
+    const grades = await selectedGrades(id);
+    const subjects = subjectsForGrades(grades);
+    const saved = await selectedSubjects(id);
+    const selected = saved.filter((subject) => subjects.includes(subject));
+
+    if (selected.length !== saved.length) {
+        await pool.query(
+            `UPDATE "TelegramSubscriber" SET subjects = $2::text[] WHERE "telegramId" = $1`,
+            [id, selected]
+        );
+    }
+
+    const gradeLabel = grades.length === 1 ? ` in ${grades[0]}` : ` in ${grades.join(', ')}`;
+    await ctx.reply(
+        `Which subjects do you teach${gradeLabel}? Pick one or more, or tap All subjects.`,
+        { reply_markup: subjectKeyboard(subjects, selected) }
+    );
 }
 
 export function registerSubjectHandlers(bot: Bot) {
     bot.callbackQuery(/^subj:(.+)$/, async (ctx) => {
         const id = ctx.from.id;
         const action = ctx.match[1];
+        const subjects = subjectsForGrades(await selectedGrades(id));
+        const current = (await selectedSubjects(id)).filter((subject) => subjects.includes(subject));
 
         if (action === 'DONE') {
-            const selected = await selectedSubjects(id);
-            if (selected.length === 0) {
+            if (current.length === 0) {
                 return ctx.answerCallbackQuery({ text: 'Pick at least one subject.' });
             }
             await ctx.answerCallbackQuery();
-            await ctx.editMessageText(`Subjects: ${selected.join(', ')}`);
-            return askGrades(ctx);
+            await ctx.editMessageText(`Subjects: ${current.join(', ')}`);
+            return askGender(ctx);
         }
 
         let next: string[];
         if (action === 'ALL') {
-            next = [...SUBJECTS];
+            next = [...subjects];
         } else if (action === 'CLEAR') {
             next = [];
         } else {
-            const current = await selectedSubjects(id);
+            if (!subjects.includes(action)) {
+                return ctx.answerCallbackQuery({ text: 'That subject is not offered for the selected grades.' });
+            }
             next = current.includes(action)
                 ? current.filter((s) => s !== action)
                 : [...current, action];
@@ -65,6 +90,6 @@ export function registerSubjectHandlers(bot: Bot) {
             [id, next]
         );
         await ctx.answerCallbackQuery();
-        await ctx.editMessageReplyMarkup({ reply_markup: subjectKeyboard(next) });
+        await ctx.editMessageReplyMarkup({ reply_markup: subjectKeyboard(subjects, next) });
     });
 }

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { pool } from '../src/db.js';
-import { GRADES, SUBJECTS } from '../src/curriculum.js';
+import { GRADES, subjectsForGrades } from '../src/curriculum.js';
 import { registerGenderHandlers } from '../src/gender.js';
 import { registerGradeHandlers } from '../src/grades.js';
 import { registerOnboardingHandlers } from '../src/onboarding.js';
@@ -43,9 +43,10 @@ function keyboardCallbacks(call: NonNullable<ReturnType<typeof lastCall>>): stri
 }
 
 describe('tutor onboarding handlers', () => {
-    it('saves area and prompts with the full curriculum subject list', async () => {
+    it('asks for grades first, then offers only subjects from the selected grade', async () => {
         const { bot, sent } = fakeBot();
         registerOnboardingHandlers(bot);
+        registerGradeHandlers(bot);
 
         await bot.handleUpdate(callbackUpdate(TEST_USER_ID, 'area:Bole'));
 
@@ -53,10 +54,16 @@ describe('tutor onboarding handlers', () => {
             expect.stringContaining('SET "subCity"'),
             ['Bole', TEST_USER_ID]
         );
-        expect(lastCall(sent, 'sendMessage')?.payload.text).toContain('Which subjects do you teach?');
+        expect(lastCall(sent, 'sendMessage')?.payload.text).toContain('What grade do you teach?');
+        expect(keyboardCallbacks(lastCall(sent, 'sendMessage')!)).toContain('grade:Grade 2');
+
+        await bot.handleUpdate(callbackUpdate(TEST_USER_ID, 'grade:Grade 2'));
+        await bot.handleUpdate(callbackUpdate(TEST_USER_ID, 'grade:DONE'));
+
+        expect(lastCall(sent, 'sendMessage')?.payload.text).toContain('Which subjects do you teach in Grade 2?');
         const subjectButtons = keyboardCallbacks(lastCall(sent, 'sendMessage')!);
         expect(subjectButtons.filter((data) => data.startsWith('subj:'))).toEqual([
-            ...SUBJECTS.map((subject) => `subj:${subject}`),
+            ...subjectsForGrades(['Grade 2']).map((subject) => `subj:${subject}`),
             'subj:ALL',
             'subj:CLEAR',
             'subj:DONE',
@@ -65,24 +72,25 @@ describe('tutor onboarding handlers', () => {
 
     it('supports subject All, Clear, Done, and rejects an empty Done', async () => {
         const { bot, sent } = fakeBot();
+        selectedGrades = ['Grade 8'];
         registerSubjectHandlers(bot);
 
         await bot.handleUpdate(callbackUpdate(TEST_USER_ID, 'subj:DONE'));
         expect(lastCall(sent, 'answerCallbackQuery')?.payload.text).toBe('Pick at least one subject.');
 
         await bot.handleUpdate(callbackUpdate(TEST_USER_ID, 'subj:ALL'));
-        expect(selectedSubjects).toEqual([...SUBJECTS]);
+        expect(selectedSubjects).toEqual(subjectsForGrades(['Grade 8']));
 
         await bot.handleUpdate(callbackUpdate(TEST_USER_ID, 'subj:CLEAR'));
         expect(selectedSubjects).toEqual([]);
 
-        await bot.handleUpdate(callbackUpdate(TEST_USER_ID, 'subj:English'));
+        await bot.handleUpdate(callbackUpdate(TEST_USER_ID, 'subj:Mathematics'));
         await bot.handleUpdate(callbackUpdate(TEST_USER_ID, 'subj:DONE'));
-        expect(selectedSubjects).toEqual(['English']);
-        expect(lastCall(sent, 'sendMessage')?.payload.text).toContain('Which grades do you teach?');
+        expect(selectedSubjects).toEqual(['Mathematics']);
+        expect(lastCall(sent, 'sendMessage')?.payload.text).toContain('What is your gender?');
     });
 
-    it('supports grade All, Clear, Done, and rejects an empty Done', async () => {
+    it('supports grade All, Clear, Done, and rejects an empty or subjectless selection', async () => {
         const { bot, sent } = fakeBot();
         registerGradeHandlers(bot);
 
@@ -98,7 +106,12 @@ describe('tutor onboarding handlers', () => {
         await bot.handleUpdate(callbackUpdate(TEST_USER_ID, 'grade:Grade 8'));
         await bot.handleUpdate(callbackUpdate(TEST_USER_ID, 'grade:DONE'));
         expect(selectedGrades).toEqual(['Grade 8']);
-        expect(lastCall(sent, 'sendMessage')?.payload.text).toContain('What is your gender?');
+        expect(lastCall(sent, 'sendMessage')?.payload.text).toContain('Which subjects do you teach in Grade 8?');
+
+        await bot.handleUpdate(callbackUpdate(TEST_USER_ID, 'grade:CLEAR'));
+        await bot.handleUpdate(callbackUpdate(TEST_USER_ID, 'grade:KG'));
+        await bot.handleUpdate(callbackUpdate(TEST_USER_ID, 'grade:DONE'));
+        expect(lastCall(sent, 'answerCallbackQuery')?.payload.text).toContain('No subjects are listed for KG');
     });
 
     it('saves gender and proceeds to salary selection', async () => {

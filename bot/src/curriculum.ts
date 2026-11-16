@@ -16,17 +16,17 @@ export const SUBJECTS = [
   'ICT', 'Technical Drawing',
 ] as const;
 
-const G1_2 = ['Mother Tongue', 'English', 'Mathematics', 'Environmental Science', 'Arts and Physical Education'];
-const G3_4 = [...G1_2, 'Amharic'];
-const G5_6 = ['Mother Tongue', 'English', 'Amharic', 'Mathematics', 'Integrated Science',
+const G1_2 = ['Afaan Oromo', 'Amharic', 'English', 'Mathematics', 'Environmental Science', 'Arts and Physical Education'];
+const G3_4 = G1_2;
+const G5_6 = ['Afaan Oromo', 'English', 'Amharic', 'Mathematics', 'Integrated Science',
   'Civics and Ethical Education', 'Visual Arts and Music', 'Physical Education', 'Social Studies'];
-const G7_8 = ['Mother Tongue', 'English', 'Amharic', 'Mathematics', 'Biology', 'Chemistry', 'Physics',
+const G7_8 = ['Afaan Oromo', 'English', 'Amharic', 'Mathematics', 'Biology', 'Chemistry', 'Physics',
   'Civics and Ethical Education', 'Visual Arts and Music', 'Physical Education', 'Social Studies'];
 const G9_10 = ['English', 'Amharic', 'Mathematics', 'ICT', 'Civics and Ethical Education', 'Biology',
   'Chemistry', 'Physics', 'Geography', 'History', 'Physical Education'];
 const G11_12 = ['English', 'Civics and Ethical Education', 'Physical Education', 'Mathematics', 'ICT',
   'Biology', 'Chemistry', 'Physics', 'Technical Drawing', 'Geography', 'History', 'Economics',
-  'General Business', 'Mother Tongue', 'Amharic'];
+  'General Business', 'Amharic'];
 
 export const SUBJECTS_BY_GRADE: Record<string, readonly string[]> = {
   'KG': [],

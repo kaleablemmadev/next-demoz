@@ -9,7 +9,7 @@ import { registerSearchHandlers } from '../src/search.js';
 import { registerSubjectHandlers } from '../src/subjects.js';
 import { registerRoleHandlers } from '../src/roles.js';
 import { WELCOME_MESSAGE, registerWelcomeHandlers } from '../src/welcome.js';
-import { SUBJECTS } from '../src/curriculum.js';
+import { SUBJECTS, subjectsForGrades } from '../src/curriculum.js';
 import { callbackUpdate, fakeBot, textUpdate } from './helpers.js';
 
 vi.mock('../src/db.js', () => ({
@@ -168,12 +168,17 @@ describe('complete bot workflows', () => {
         );
 
         await press(bot, TEST_ONBOARDING_ID, 'area:Bole');
-        await press(bot, TEST_ONBOARDING_ID, 'subj:Mathematics');
-        await press(bot, TEST_ONBOARDING_ID, 'subj:DONE');
-        expect(lastMessage(sent)?.payload.text).toContain('Which grades do you teach?');
-
         await press(bot, TEST_ONBOARDING_ID, 'grade:Grade 8');
         await press(bot, TEST_ONBOARDING_ID, 'grade:DONE');
+        expect(lastMessage(sent)?.payload.text).toContain('Which subjects do you teach in Grade 8?');
+        expect(callbacks(lastMessage(sent)!)).toEqual([
+            ...subjectsForGrades(['Grade 8']).map((subject) => `subj:${subject}`),
+            'subj:ALL',
+            'subj:CLEAR',
+            'subj:DONE',
+        ]);
+        await press(bot, TEST_ONBOARDING_ID, 'subj:Mathematics');
+        await press(bot, TEST_ONBOARDING_ID, 'subj:DONE');
         expect(lastMessage(sent)?.payload.text).toContain('What is your gender?');
 
         await press(bot, TEST_ONBOARDING_ID, 'gender:FEMALE');

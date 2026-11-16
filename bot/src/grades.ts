@@ -2,8 +2,8 @@
 
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
-import { askGender } from './gender.js';
-import { GRADES } from './curriculum.js';
+import { askSubjects } from './subjects.js';
+import { GRADES, subjectsForGrades } from './curriculum.js';
 
 async function selectedGrades(telegramId: number): Promise<string[]> {
     const { rows } = await pool.query(
@@ -25,7 +25,7 @@ function gradeKeyboard(selected: string[]) {
 
 export async function askGrades(ctx: Context) {
     const selected = await selectedGrades(ctx.from!.id);
-    await ctx.reply('Which grades do you teach? Pick one or more, or tap All grades.', {
+    await ctx.reply('What grade do you teach? Pick one or more, or tap All grades.', {
         reply_markup: gradeKeyboard(selected),
     });
 }
@@ -40,9 +40,12 @@ export function registerGradeHandlers(bot: Bot) {
             if (selected.length === 0) {
                 return ctx.answerCallbackQuery({ text: 'Pick at least one grade.' });
             }
+            if (subjectsForGrades(selected).length === 0) {
+                return ctx.answerCallbackQuery({ text: 'No subjects are listed for KG. Pick another grade.' });
+            }
             await ctx.answerCallbackQuery();
             await ctx.editMessageText(`Grades: ${selected.join(', ')}`);
-            return askGender(ctx);
+            return askSubjects(ctx);
         }
 
         let next: string[];
