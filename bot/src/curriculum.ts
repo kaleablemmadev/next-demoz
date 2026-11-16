@@ -9,7 +9,7 @@ export const GRADES = [
 ] as const;
 
 export const SUBJECTS = [
-  'Mother Tongue', 'English', 'Amharic', 'Mathematics', 'Environmental Science',
+  'Afaan Oromo', 'English', 'Amharic', 'Mathematics', 'Environmental Science',
   'Arts and Physical Education', 'Integrated Science', 'Civics and Ethical Education',
   'Visual Arts and Music', 'Physical Education', 'Social Studies', 'Biology',
   'Chemistry', 'Physics', 'Geography', 'History', 'Economics', 'General Business',
