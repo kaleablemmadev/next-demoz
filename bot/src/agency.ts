@@ -1,6 +1,7 @@
 // src/agency.ts
 
 import { Bot, InlineKeyboard, type Context } from 'grammy';
+import { randomUUID } from 'node:crypto';
 import { pool } from './db.js';
 import { KNOWN_SUB_CITIES } from '../../shared/rules/nearby-areas.js';
 import { GRADES } from './curriculum.js';
@@ -16,6 +17,7 @@ type Unit = 'MONTH' | 'HOUR';
 type Gender = 'MALE' | 'FEMALE' | null;
 
 type Draft = {
+    id: string;
     orgId: string;
     orgName: string;
     orgUsername: string;
@@ -49,15 +51,17 @@ const WEEKS_PER_MONTH = 4.33;
 // In-memory drafts. If the bot restarts mid-form, the agency sends /new again.
 const drafts = new Map<number, Draft>();
 const templateDrafts = new Map<number, string>();
+const lastAgencyGradeTap = new Map<number, { key: string; at: number }>();
 
-async function findAgency(username: string | undefined) {
-    if (!username) return null;
+async function findAgency(telegramId: number, username: string | undefined) {
     const { rows } = await pool.query(
         `SELECT id, name, "telegramUsername", "postTemplate"
      FROM "Organization"
-     WHERE lower("telegramUsername") = lower($1)
-       AND status = 'ACTIVE'`,
-        [username]
+     WHERE status = 'ACTIVE'
+       AND ("telegramUserId" = $1 OR lower("telegramUsername") = lower($2))
+     ORDER BY CASE WHEN "telegramUserId" = $1 THEN 0 ELSE 1 END
+     LIMIT 1`,
+        [telegramId, username]
     );
     return rows[0] ?? null;
 }
@@ -92,21 +96,21 @@ function listLabel(items: string[], all: readonly string[], allLabel: string, em
     return items.join(', ');
 }
 
-function multiKeyboard(kind: string, options: readonly string[], selected: string[]) {
+function multiKeyboard(kind: string, options: readonly string[], selected: string[], sessionId: string) {
     const kb = new InlineKeyboard();
     options.forEach((v, i) => {
-        kb.text(`${selected.includes(v) ? '✅ ' : ''}${v}`, `ag:${kind}:${v}`);
+        kb.text(`${selected.includes(v) ? '✅ ' : ''}${v}`, `ag:${kind}:${sessionId}:${v}`);
         if (i % 2 === 1) kb.row();
     });
-    kb.row().text('All', `ag:${kind}:ALL`).text('Clear', `ag:${kind}:CLEAR`);
-    kb.row().text('Done', `ag:${kind}:DONE`);
+    kb.row().text('All', `ag:${kind}:${sessionId}:ALL`).text('Clear', `ag:${kind}:${sessionId}:CLEAR`);
+    kb.row().text('Done', `ag:${kind}:${sessionId}:DONE`);
     return kb;
 }
 
-function choices(prefix: string, options: [string, string][], perRow = 2) {
+function choices(prefix: string, options: [string, string][], sessionId: string, perRow = 2) {
     const kb = new InlineKeyboard();
     options.forEach(([label, value], i) => {
-        kb.text(label, `ag:${prefix}:${value}`);
+        kb.text(label, `ag:${prefix}:${sessionId}:${value}`);
         if ((i + 1) % perRow === 0) kb.row();
     });
     return kb;
@@ -150,23 +154,23 @@ async function ask(ctx: Context, d: Draft) {
             );
         case 'grades':
             return ctx.reply('Which grades? Pick one or more, or tap All.', {
-                reply_markup: multiKeyboard('grd', GRADES, d.grades),
+                reply_markup: multiKeyboard('grd', GRADES, d.grades, d.id),
             });
         case 'area':
             return ctx.reply('Which sub-city?', {
-                reply_markup: choices('area', KNOWN_SUB_CITIES.map((c) => [c, c] as [string, string]), 3),
+                reply_markup: choices('area', KNOWN_SUB_CITIES.map((c) => [c, c] as [string, string]), d.id, 3),
             });
         case 'location':
             return ctx.reply('Optional: type a location detail, such as a nearby landmark. Or tap Skip.', {
-                reply_markup: new InlineKeyboard().text('Skip', 'ag:skip:location'),
+                reply_markup: new InlineKeyboard().text('Skip', `ag:skip:${d.id}:location`),
             });
         case 'sessions':
             return ctx.reply('Sessions per week?', {
-                reply_markup: choices('sess', [['2', '2'], ['3', '3'], ['4', '4'], ['5', '5']], 4),
+                reply_markup: choices('sess', [['2', '2'], ['3', '3'], ['4', '4'], ['5', '5']], d.id, 4),
             });
         case 'unit':
             return ctx.reply('How is the pay set?', {
-                reply_markup: choices('unit', [['Monthly', 'MONTH'], ['Hourly', 'HOUR']], 2),
+                reply_markup: choices('unit', [['Monthly', 'MONTH'], ['Hourly', 'HOUR']], d.id, 2),
             });
         case 'amount':
             return ctx.reply(
@@ -178,28 +182,29 @@ async function ask(ctx: Context, d: Draft) {
             return ctx.reply('How many hours is one session? Type a number, for example 2.');
         case 'gender':
             return ctx.reply('Preferred tutor gender?', {
-                reply_markup: choices('gen', [['Any', 'ANY'], ['Male', 'MALE'], ['Female', 'FEMALE']], 3),
+                reply_markup: choices('gen', [['Any', 'ANY'], ['Male', 'MALE'], ['Female', 'FEMALE']], d.id, 3),
             });
         case 'requirements':
             return ctx.reply(
                 'Optional: preferred subject proficiency for the tutor, for example "Math strong, English basic". Or tap Skip.',
-                { reply_markup: new InlineKeyboard().text('Skip', 'ag:skip:requirements') }
+                { reply_markup: new InlineKeyboard().text('Skip', `ag:skip:${d.id}:requirements`) }
             );
         case 'confirm':
             return ctx.reply(`Please check the offer:\n\n${offerLines(d).join('\n')}`, {
-                reply_markup: new InlineKeyboard().text('Post offer', 'ag:post:yes').text('Cancel', 'ag:post:no'),
+                reply_markup: new InlineKeyboard().text('Post offer', `ag:post:yes:${d.id}`).text('Cancel', `ag:post:no:${d.id}`),
             });
     }
 }
 
 export function registerAgencyHandlers(bot: Bot) {
     bot.command('template', async (ctx) => {
-        const agency = await findAgency(ctx.from?.username);
+        const agency = await findAgency(ctx.from!.id, ctx.from?.username);
 
         if (!agency) {
             return ctx.reply('This account is not registered as an active agency.');
         }
 
+        drafts.delete(ctx.from!.id);
         templateDrafts.set(ctx.from!.id, agency.id);
 
         await ctx.reply(
@@ -218,13 +223,22 @@ export function registerAgencyHandlers(bot: Bot) {
         );
     });
 
+    bot.command('cancel', async (ctx, next) => {
+        const hadOffer = drafts.delete(ctx.from!.id);
+        const hadTemplate = templateDrafts.delete(ctx.from!.id);
+        if (!hadOffer && !hadTemplate) return next();
+        return ctx.reply('Cancelled. No changes were saved.');
+    });
+
     bot.command('new', async (ctx) => {
-        const agency = await findAgency(ctx.from?.username);
+        const agency = await findAgency(ctx.from!.id, ctx.from?.username);
         if (!agency) {
             return ctx.reply('This account is not registered as an agency.');
         }
 
+        templateDrafts.delete(ctx.from!.id);
         const draft: Draft = {
+            id: randomUUID(),
             orgId: agency.id,
             orgName: agency.name,
             orgUsername: agency.telegramUsername,
@@ -237,15 +251,23 @@ export function registerAgencyHandlers(bot: Bot) {
     });
 
     // Grade multi-select.
-    bot.callbackQuery(/^ag:grd:(.+)$/, async (ctx) => {
+    bot.callbackQuery(/^ag:grd:([^:]+):(.+)$/, async (ctx) => {
         const d = drafts.get(ctx.from.id);
         if (!d) {
             await ctx.answerCallbackQuery();
             return ctx.reply('Send /new to start a new offer.');
         }
 
-        const [, value] = ctx.match as RegExpMatchArray;
-
+        const [, sessionId, value] = ctx.match as RegExpMatchArray;
+        const previousTap = lastAgencyGradeTap.get(ctx.from.id);
+        const now = Date.now();
+        if (previousTap?.key === `${sessionId}:${value}` && now - previousTap.at < 700) {
+            await ctx.answerCallbackQuery({ text: 'Already processing that tap.' });
+            return;
+        }
+        lastAgencyGradeTap.set(ctx.from.id, { key: `${sessionId}:${value}`, at: now });
+        if (sessionId !== d.id) { await ctx.answerCallbackQuery({ text: 'This form has expired.' }); return; }
+        if (d.step !== 'grades') { await ctx.answerCallbackQuery({ text: 'This step has expired.' }); return; }
         if (value === 'DONE') {
             if (d.grades.length === 0) {
                 return ctx.answerCallbackQuery({ text: 'Pick at least one grade.' });
@@ -264,18 +286,21 @@ export function registerAgencyHandlers(bot: Bot) {
         d.grades = next;
 
         await ctx.answerCallbackQuery();
-        await ctx.editMessageReplyMarkup({ reply_markup: multiKeyboard('grd', GRADES, next) });
+        await ctx.editMessageReplyMarkup({ reply_markup: multiKeyboard('grd', GRADES, next, d.id) });
     });
 
     // Single-choice buttons.
-    bot.callbackQuery(/^ag:(area|sess|unit|gen):(.+)$/, async (ctx) => {
+    bot.callbackQuery(/^ag:(area|sess|unit|gen):([^:]+):(.+)$/, async (ctx) => {
         const d = drafts.get(ctx.from.id);
         if (!d) {
             await ctx.answerCallbackQuery();
             return ctx.reply('Send /new to start a new offer.');
         }
 
-        const [, field, value] = ctx.match as RegExpMatchArray;
+        const [, field, sessionId, value] = ctx.match as RegExpMatchArray;
+        if (sessionId !== d.id) { await ctx.answerCallbackQuery({ text: 'This form has expired.' }); return; }
+        const expectedStep = field === 'area' ? 'area' : field === 'sess' ? 'sessions' : field === 'unit' ? 'unit' : 'gender';
+        if (d.step !== expectedStep) { await ctx.answerCallbackQuery({ text: 'This step has expired.' }); return; }
 
         if (field === 'area') {
             d.subCity = value;
@@ -296,14 +321,17 @@ export function registerAgencyHandlers(bot: Bot) {
     });
 
     // Skip buttons for the optional steps.
-    bot.callbackQuery(/^ag:skip:(location|requirements)$/, async (ctx) => {
+    bot.callbackQuery(/^ag:skip:([^:]+):(location|requirements)$/, async (ctx) => {
         const d = drafts.get(ctx.from.id);
         if (!d) {
             await ctx.answerCallbackQuery();
             return ctx.reply('Send /new to start a new offer.');
         }
 
-        const [, field] = ctx.match as RegExpMatchArray;
+        const [, sessionId, field] = ctx.match as RegExpMatchArray;
+        if (sessionId !== d.id) { await ctx.answerCallbackQuery({ text: 'This form has expired.' }); return; }
+        const expectedStep = field === 'location' ? 'location' : 'requirements';
+        if (d.step !== expectedStep) { await ctx.answerCallbackQuery({ text: 'This step has expired.' }); return; }
         if (field === 'location') {
             d.locationDetail = null;
             d.step = 'sessions';
@@ -316,13 +344,15 @@ export function registerAgencyHandlers(bot: Bot) {
         await ask(ctx, d);
     });
 
-    bot.callbackQuery('ag:post:yes', async (ctx) => {
+    bot.callbackQuery(/^ag:post:yes:([^:]+)$/, async (ctx) => {
         const d = drafts.get(ctx.from.id);
         if (!d) {
             await ctx.answerCallbackQuery();
             return ctx.reply('Send /new to start a new offer.');
         }
 
+        const sessionId = (ctx.match as RegExpMatchArray)[1];
+        if (sessionId !== d.id || d.step !== 'confirm') { await ctx.answerCallbackQuery({ text: 'This confirmation has expired.' }); return; }
         // Remove the draft before saving, so a second tap cannot post the same offer again.
         drafts.delete(ctx.from.id);
 
@@ -367,7 +397,10 @@ export function registerAgencyHandlers(bot: Bot) {
         );
     });
 
-    bot.callbackQuery('ag:post:no', async (ctx) => {
+    bot.callbackQuery(/^ag:post:no:([^:]+)$/, async (ctx) => {
+        const d = drafts.get(ctx.from.id);
+        const sessionId = (ctx.match as RegExpMatchArray)[1];
+        if (!d || sessionId !== d.id || d.step !== 'confirm') { await ctx.answerCallbackQuery({ text: 'This confirmation has expired.' }); return; }
         drafts.delete(ctx.from.id);
         await ctx.answerCallbackQuery();
         await ctx.reply('Cancelled.');
@@ -375,9 +408,6 @@ export function registerAgencyHandlers(bot: Bot) {
 
     // Typed answers: optional location, pay amount, session hours, requirements.
     bot.on('message:text', async (ctx, next) => {
-        const d = drafts.get(ctx.from.id);
-        if (!d) return next();
-
         const text = ctx.message.text.trim();
 
         // Save a complete custom offer template.
@@ -413,8 +443,8 @@ export function registerAgencyHandlers(bot: Bot) {
             await pool.query(
                 `UPDATE "Organization"
          SET "postTemplate" = $2
-         WHERE id = $1 AND "telegramUserId" = $3`,
-                [orgId, text, ctx.from.id]
+         WHERE id = $1 AND ("telegramUserId" = $3 OR lower("telegramUsername") = lower($4))`,
+                [orgId, text, ctx.from.id, ctx.from.username ?? null]
             );
 
             templateDrafts.delete(ctx.from.id);
@@ -424,6 +454,11 @@ export function registerAgencyHandlers(bot: Bot) {
                 'You can change it any time with /template.'
             );
         }
+
+
+        const d = drafts.get(ctx.from.id);
+        if (!d) return next();
+
 
         // A command ends the offer in progress.
         if (text.startsWith('/')) {

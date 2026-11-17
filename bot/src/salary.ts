@@ -35,11 +35,16 @@ export function registerSalaryHandlers(bot: Bot) {
         const value = raw === 'any' ? null : Number(raw);
         const label = SALARY_OPTIONS.find((o) => o.value === value)?.label ?? 'Any salary';
 
-        await pool.query(
-            `UPDATE "TelegramSubscriber" SET "minSalaryEtb" = $1 WHERE "telegramId" = $2`,
+        const { rows } = await pool.query(
+            `UPDATE "TelegramSubscriber" SET "minSalaryEtb" = $1
+             WHERE "telegramId" = $2 AND "minSalaryEtb" IS DISTINCT FROM $1
+             RETURNING "telegramId"`,
             [value, ctx.from.id]
         );
-
+        if (rows.length === 0) {
+            await ctx.answerCallbackQuery({ text: 'This salary choice has already been saved.' });
+            return;
+        }
         await ctx.answerCallbackQuery();
         await ctx.editMessageText(`Salary filter saved: ${label}. You're all set.`);
         await ctx.reply('See the list of first offers?', {

@@ -21,6 +21,18 @@ const LABEL: Record<Field, string> = {
 
 // Each searcher's current filters. Lost on restart, so they send /search again.
 const filters = new Map<number, SearchFilters>();
+const lastSearchTap = new Map<number, { key: string; at: number }>();
+
+async function ignoreRapidRepeat(ctx: Context, key: string): Promise<boolean> {
+    const previous = lastSearchTap.get(ctx.from!.id);
+    const now = Date.now();
+    if (previous?.key === key && now - previous.at < 700) {
+        await ctx.answerCallbackQuery({ text: 'Already processing that tap.' });
+        return true;
+    }
+    lastSearchTap.set(ctx.from!.id, { key, at: now });
+    return false;
+}
 
 // Start from the searcher's own grades and area. Gender starts at Any.
 async function fromProfile(telegramId: number): Promise<SearchFilters> {
@@ -100,6 +112,7 @@ export function registerSearchHandlers(bot: Bot) {
         if (!f) return;
         const field = ctx.match[1] as Field;
         const value = ctx.match[2];
+        if (await ignoreRapidRepeat(ctx, `toggle:${field}:${value}`)) return;
         const list = f[field];
         f[field] = list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
         await ctx.answerCallbackQuery();
@@ -110,6 +123,7 @@ export function registerSearchHandlers(bot: Bot) {
         const f = await current(ctx);
         if (!f) return;
         const field = ctx.match[1] as Field;
+        if (await ignoreRapidRepeat(ctx, `all:${field}`)) return;
         f[field] = [...OPTIONS[field]];
         await ctx.answerCallbackQuery();
         await ctx.editMessageReplyMarkup({ reply_markup: pickKeyboard(field, f[field]) });
@@ -119,6 +133,7 @@ export function registerSearchHandlers(bot: Bot) {
         const f = await current(ctx);
         if (!f) return;
         const field = ctx.match[1] as Field;
+        if (await ignoreRapidRepeat(ctx, `clear:${field}`)) return;
         f[field] = [];
         await ctx.answerCallbackQuery();
         await ctx.editMessageReplyMarkup({ reply_markup: pickKeyboard(field, f[field]) });
@@ -134,6 +149,7 @@ export function registerSearchHandlers(bot: Bot) {
     bot.callbackQuery('sr:gender', async (ctx) => {
         const f = await current(ctx);
         if (!f) return;
+        if (await ignoreRapidRepeat(ctx, 'gender')) return;
         // Cycles: any, male, female, any.
         f.gender = f.gender === null ? 'MALE' : f.gender === 'MALE' ? 'FEMALE' : null;
         await ctx.answerCallbackQuery();
@@ -141,6 +157,7 @@ export function registerSearchHandlers(bot: Bot) {
     });
 
     bot.callbackQuery('sr:reset', async (ctx) => {
+        if (await ignoreRapidRepeat(ctx, 'reset')) return;
         const f = await fromProfile(ctx.from.id);
         filters.set(ctx.from.id, f);
         await ctx.answerCallbackQuery({ text: 'Reset to your profile.' });
@@ -150,6 +167,7 @@ export function registerSearchHandlers(bot: Bot) {
     bot.callbackQuery('sr:show', async (ctx) => {
         const f = await current(ctx);
         if (!f) return;
+        if (await ignoreRapidRepeat(ctx, 'show')) return;
         await ctx.answerCallbackQuery();
 
         const { rows } = await pool.query(`

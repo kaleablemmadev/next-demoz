@@ -26,7 +26,6 @@ import { registerAgencyLifecycle } from './agency-lifecycle.js';
 import { registerSearchHandlers } from './search.js';
 import { registerGenderSettingsHandlers } from './gender-settings.js';
 import { registerRepostHandlers, startRepostScheduler } from './reposts.js';
-import { registerWelcomeHandlers } from './welcome.js';
 import { startRenewalReminders } from './renewals.js';
 import { sendOfferReports } from './offer-report.js';
 import { startAdminSummary, registerSummaryCommand } from './admin-summary.js';
@@ -54,9 +53,8 @@ registerOnboardingHandlers(bot);
 
 bot.on('callback_query:data', (ctx, next) => { console.log('Button pressed:', ctx.callbackQuery.data); return next(); });
 
-registerWelcomeHandlers(bot);
-
 registerAdminHandlers(bot);
+registerAgencyLifecycle(bot);
 registerSignupHandlers(bot);
 registerGradeHandlers(bot);
 registerPlacementHandlers(bot);
@@ -67,7 +65,6 @@ registerPaymentHandlers(bot);
 registerAgencyHandlers(bot);
 registerSummaryCommand(bot);
 registerParentHandlers(bot);
-registerAgencyLifecycle(bot);
 registerSettingsHandlers(bot);
 registerRepostHandlers(bot);
 registerGenderHandlers(bot);

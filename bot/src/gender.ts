@@ -18,11 +18,16 @@ export function registerGenderHandlers(bot: Bot) {
     bot.callbackQuery(/^gender:(MALE|FEMALE)$/, async (ctx) => {
         const gender = ctx.match[1];
 
-        await pool.query(
-            `UPDATE "TelegramSubscriber" SET gender = $1 WHERE "telegramId" = $2`,
+        const { rows } = await pool.query(
+            `UPDATE "TelegramSubscriber" SET gender = $1
+             WHERE "telegramId" = $2 AND gender IS DISTINCT FROM $1
+             RETURNING "telegramId"`,
             [gender, ctx.from.id]
         );
-
+        if (rows.length === 0) {
+            await ctx.answerCallbackQuery({ text: 'This choice has already been saved.' });
+            return;
+        }
         await ctx.answerCallbackQuery();
         await ctx.editMessageText(`Gender saved: ${gender === 'MALE' ? 'Male' : 'Female'}.`);
         await askSalary(ctx);
