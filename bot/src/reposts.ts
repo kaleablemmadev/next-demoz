@@ -156,6 +156,10 @@ async function postDueOffers(bot: Bot): Promise<void> {
             }
         }
 
+        // A new copy was posted, so remove the previous copies to keep one live post.
+        if (groupMessageId !== null) await deleteOldPost(bot, o.groupChatId, o.groupMessageId, o.id);
+        if (channelMessageId !== null) await deleteOldPost(bot, o.channelChatId, o.channelMessageId, o.id);
+
         if (groupMessageId !== null || channelMessageId !== null) {
             await pool.query(
                 `UPDATE "TutoringOffer"
