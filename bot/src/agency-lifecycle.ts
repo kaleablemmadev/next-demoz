@@ -52,9 +52,23 @@ export async function reactivateIfReturning(telegramUserId: number): Promise<Org
         legacyEvents[0]?.type === 'BLOCKED';
     if (!wasAway) return org;
 
-    await pool.query(`UPDATE "Organization" SET status = 'ACTIVE' WHERE id = $1`, [org.id]);
-    await log(org.id, 'RETURNED');
-    return { ...org, status: 'ACTIVE' };
+    const reactivated = await withTransaction(async (client) => {
+        const { rows: updated } = await client.query<Org>(
+            `UPDATE "Organization" SET status = 'ACTIVE' WHERE id = $1
+             RETURNING id, name, status, "auditRef"`,
+            [org.id],
+        );
+        if (!updated[0]) return null;
+        await recordAuditEvent(client, {
+            actorRef: updated[0].auditRef,
+            actorType: 'AGENCY',
+            action: 'ACCOUNT_RETURNED',
+            entityType: 'ORGANIZATION',
+            entityRef: org.id,
+        });
+        return updated[0];
+    });
+    return reactivated;
 }
 
 // Watches the agency's private chat with the bot: blocking logs BLOCKED, unblocking brings it back.
@@ -67,7 +81,7 @@ export function registerAgencyLifecycle(bot: Bot) {
         const status = ctx.myChatMember.new_chat_member.status;
 
         const { rows } = await pool.query<Org>(
-            `SELECT id, name, status FROM "Organization" WHERE "telegramUserId" = $1`,
+            `SELECT id, name, status, "auditRef" FROM "Organization" WHERE "telegramUserId" = $1`,
             [telegramId]
         );
         const org = rows[0];
