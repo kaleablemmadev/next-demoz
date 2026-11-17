@@ -69,28 +69,26 @@ export function registerPersonalDepartureCallbacks(bot: Bot, onDepartureComplete
                 );
 
                 if (retainedRequests > 0) {
-                    // Keep only the parent/request keys needed by the historical placement.
+                    // Detach placement-linked requests before deleting the parent identity.
+                    // Keep only non-identifying placement context needed by Assignment history.
                     await client.query(
                         `UPDATE "ParentRequest"
-                         SET "locationDetail" = NULL, "weakSubjects" = NULL, notes = NULL
+                         SET "parentId" = NULL,
+                             "subCity" = 'Removed',
+                             "locationDetail" = NULL,
+                             "weakSubjects" = NULL,
+                             "budgetEtb" = NULL,
+                             "preferredTutorGender" = NULL,
+                             notes = NULL
                          WHERE "parentId" = $1
                            AND EXISTS (
                                SELECT 1 FROM "Assignment" a WHERE a."requestId" = "ParentRequest".id
                            )`,
                         [parent.id],
                     );
-                    await client.query(
-                        `UPDATE "Parent"
-                         SET "telegramId" = -(floor(random() * 9000000000000000000)::bigint + 1),
-                             "telegramUsername" = NULL,
-                             "contactHandle" = NULL
-                         WHERE id = $1`,
-                        [parent.id],
-                    );
-                } else {
-                    await client.query(`DELETE FROM "Parent" WHERE id = $1`, [parent.id]);
-                    parentRemoved = true;
                 }
+                await client.query(`DELETE FROM "Parent" WHERE id = $1`, [parent.id]);
+                parentRemoved = true;
 
                 await recordAuditEvent(client, {
                     actorRef: parent.auditRef,
@@ -138,7 +136,7 @@ export function registerPersonalDepartureCallbacks(bot: Bot, onDepartureComplete
                 retainedRequests,
                 tutorRemoved: Boolean(tutor),
                 signupRemoved,
-            };;
+            };
         });
 
         clearParentDraft(telegramId);
