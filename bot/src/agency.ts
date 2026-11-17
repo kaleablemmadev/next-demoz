@@ -3,6 +3,7 @@
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { randomUUID } from 'node:crypto';
 import { pool } from './db.js';
+import { recordAuditEvent, withTransaction } from './audit.js';
 import { KNOWN_SUB_CITIES } from '../../shared/rules/nearby-areas.js';
 import { GRADES } from './curriculum.js';
 import {
@@ -360,30 +361,48 @@ export function registerAgencyHandlers(bot: Bot) {
         const title = `Tutor (${gradesText})`;
 
         try {
-            await pool.query(
-                `INSERT INTO "TutoringOffer"
-     ("organizationId", "title", "subject", "gradeLevel", "gradeLevels",
-      "subCity", "locationDetail", "monthlySalaryEtb", "salaryUnit",
-      "salaryAmountEtb", "sessionHours", "sessionsPerWeek",
-      "preferredTutorGender", "requirements", "status")
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'OPEN')`,
-                [
-                    d.orgId,
-                    title,
-                    d.subject,
-                    d.grades[0] ?? 'Not specified',
-                    d.grades,
-                    d.subCity,
-                    d.locationDetail ?? null,
-                    monthlyOf(d),
-                    d.unit,
-                    d.amount,
-                    d.sessionHours,
-                    d.sessionsPerWeek,
-                    d.gender ?? null,
-                    d.requirements ?? null,
-                ]
-            );
+            await withTransaction(async (client) => {
+                const { rows: organizations } = await client.query<{ auditRef: string }>(
+                    `SELECT "auditRef" FROM "Organization" WHERE id = $1 FOR UPDATE`,
+                    [d.orgId],
+                );
+                if (!organizations[0]) throw new Error('Agency account no longer exists.');
+
+                const { rows: offers } = await client.query<{ id: string }>(
+                    `INSERT INTO "TutoringOffer"
+                     ("organizationId", "title", "subject", "gradeLevel", "gradeLevels",
+                      "subCity", "locationDetail", "monthlySalaryEtb", "salaryUnit",
+                      "salaryAmountEtb", "sessionHours", "sessionsPerWeek",
+                      "preferredTutorGender", "requirements", "status")
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'OPEN')
+                     RETURNING id`,
+                    [
+                        d.orgId,
+                        title,
+                        d.subject,
+                        d.grades[0] ?? 'Not specified',
+                        d.grades,
+                        d.subCity,
+                        d.locationDetail ?? null,
+                        monthlyOf(d),
+                        d.unit,
+                        d.amount,
+                        d.sessionHours,
+                        d.sessionsPerWeek,
+                        d.gender ?? null,
+                        d.requirements ?? null,
+                    ],
+                );
+                if (offers[0]) {
+                    await recordAuditEvent(client, {
+                        actorRef: organizations[0].auditRef,
+                        actorType: 'AGENCY',
+                        action: 'OFFER_CREATED',
+                        entityType: 'TUTORING_OFFER',
+                        entityRef: offers[0].id,
+                    });
+                }
+            });
         } catch (err) {
             // Save failed, so put the draft back and let the agency try again.
             drafts.set(ctx.from.id, d);
