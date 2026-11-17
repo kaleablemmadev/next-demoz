@@ -28,7 +28,7 @@ export async function startPersonalDeparture(ctx: Context) {
     );
 }
 
-export function registerPersonalDepartureCallbacks(bot: Bot) {
+export function registerPersonalDepartureCallbacks(bot: Bot, onDepartureComplete?: (telegramId: number) => void) {
     bot.callbackQuery('account:leave:cancel', async (ctx) => {
         await ctx.answerCallbackQuery({ text: 'Cancelled.' });
         return ctx.editMessageText('Cancelled. Your account was not changed.');
@@ -48,6 +48,7 @@ export function registerPersonalDepartureCallbacks(bot: Bot) {
             let retainedRequests = 0;
 
             if (parent) {
+                await client.query('DELETE FROM "Feedback" WHERE "fromTelegramId" = $1 AND role <> \'AGENCY\'', [telegramId]);
                 const { rows: assigned } = await client.query<{ id: string }>(
                     `SELECT pr.id
                      FROM "ParentRequest" pr
@@ -132,6 +133,7 @@ export function registerPersonalDepartureCallbacks(bot: Bot) {
         });
 
         clearParentDraft(telegramId);
+        onDepartureComplete?.(telegramId);
         await ctx.answerCallbackQuery({ text: result.found ? 'Account data processed.' : 'Account not found.' });
         if (!result.found) return ctx.editMessageText('No active parent or tutor account was found. Nothing was changed.');
 
