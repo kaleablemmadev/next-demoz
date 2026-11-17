@@ -54,6 +54,12 @@ const drafts = new Map<number, Draft>();
 const templateDrafts = new Map<number, string>();
 const lastAgencyGradeTap = new Map<number, { key: string; at: number }>();
 
+export function clearAgencySession(telegramId: number) {
+    drafts.delete(telegramId);
+    templateDrafts.delete(telegramId);
+    lastAgencyGradeTap.delete(telegramId);
+}
+
 async function findAgency(telegramId: number, username: string | undefined) {
     const { rows } = await pool.query(
         `SELECT id, name, "telegramUsername", "postTemplate"
