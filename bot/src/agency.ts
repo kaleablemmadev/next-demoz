@@ -394,9 +394,6 @@ export function registerAgencyHandlers(bot: Bot) {
                     d.requirements ?? null,
                 ]
             );
-
-                }
-            });
         } catch (err) {
             // Save failed, so put the draft back and let the agency try again.
             drafts.set(ctx.from.id, d);
