@@ -212,7 +212,7 @@ async function expireAssignments(bot: Bot) {
                 OR (a.status = 'ACCEPTED' AND a."acceptedAt" < now() - make_interval(days => $2::int))
          ), updated AS (
              UPDATE "Assignment" a SET status = 'EXPIRED'
-             FROM expired e WHERE a.id = e.id AND a.status = e."oldStatus"
+             FROM expired e WHERE a.id = e.id AND a.status = e."oldStatus" AND a.status = e."oldStatus"
              RETURNING a.id
          )
          SELECT (e."oldStatus" = 'ACCEPTED') AS "wasAccepted",
