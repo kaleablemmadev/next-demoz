@@ -9,8 +9,9 @@ export async function sendPendingAlerts(bot: Bot): Promise<void> {
         SELECT t.id, t.title, t."gradeLevels", t."subCity", t."locationDetail",
                t."sessionsPerWeek", t."sessionHours", t."salaryUnit", t."salaryAmountEtb",
                t."monthlySalaryEtb", t."preferredTutorGender", t.requirements, t.status,
-               o."postHeader", o."postFooter", o."telegramUsername" AS "agencyUsername"
-        FROM "TutoringOffer" t
+               o."postTemplate", o.name AS "agencyName",
+                o."telegramUsername" AS "agencyUsername"
+                FROM "TutoringOffer" t
                  JOIN "Organization" o ON o.id = t."organizationId"
         WHERE t."alertedAt" IS NULL AND t.status = 'OPEN'
         ORDER BY t."postedAt" ASC

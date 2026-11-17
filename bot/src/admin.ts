@@ -12,8 +12,6 @@ const MAX_POST_FAILURES = 5; // Must match reposts.ts
 // Fields /editagency can change, mapped to database columns.
 const FIELDS: Record<string, string> = {
     name: 'name',
-    header: 'postHeader',
-    footer: 'postFooter',
     group: 'groupChatId',
     channel: 'channelChatId',
     destination: 'postDestination',
@@ -80,14 +78,12 @@ type AgencyRow = {
     postDestination: string;
     groupChatId: string | null;
     channelChatId: string | null;
-    postHeader: string | null;
-    postFooter: string | null;
 };
 
 async function findAgency(username: string): Promise<AgencyRow | null> {
     const { rows } = await pool.query<AgencyRow>(
         `SELECT id, name, "telegramUsername", COALESCE("postDestination", 'GROUP') AS "postDestination",
-                "groupChatId", "channelChatId", "postHeader", "postFooter"
+                "groupChatId", "channelChatId"
          FROM "Organization" WHERE lower("telegramUsername") = lower($1)`,
         [username]
     );
@@ -237,9 +233,7 @@ export function registerAdminHandlers(bot: Bot) {
                 `${a.name}\n@${a.telegramUsername}\n` +
                 `Destination: ${a.postDestination}\n` +
                 `Group: ${a.groupChatId ?? 'not set'}\n` +
-                `Channel: ${a.channelChatId ?? 'not set'}\n` +
-                `Header: ${a.postHeader ?? 'none'}\n` +
-                `Footer: ${a.postFooter ?? 'none'}`
+                `Channel: ${a.channelChatId ?? 'not set'}`
             );
         })
     );
@@ -255,7 +249,7 @@ export function registerAdminHandlers(bot: Bot) {
                 return ctx.reply(
                     'Usage: /editagency username field value\n' +
                     `Fields: ${Object.keys(FIELDS).join(', ')}\n` +
-                    'Use "none" to clear header, footer, group or channel.'
+                    'Use "none" to clear group or channel.'
                 );
             }
 

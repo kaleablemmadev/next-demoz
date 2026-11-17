@@ -4,6 +4,13 @@ import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
 import { KNOWN_SUB_CITIES } from '../../shared/rules/nearby-areas.js';
 import { GRADES } from './curriculum.js';
+import {
+    DEFAULT_OFFER_TEMPLATE,
+    OFFER_PLACEHOLDERS,
+    offerCardText,
+    validateOfferTemplate,
+    type CardOffer,
+} from './card.js';
 
 type Unit = 'MONTH' | 'HOUR';
 type Gender = 'MALE' | 'FEMALE' | null;
@@ -12,9 +19,9 @@ type Draft = {
     orgId: string;
     orgName: string;
     orgUsername: string;
-    postHeader: string | null;
-    postFooter: string | null;
+    postTemplate: string | null;
     step:
+    | 'subject'
     | 'grades'
     | 'area'
     | 'location'
@@ -25,6 +32,7 @@ type Draft = {
     | 'gender'
     | 'requirements'
     | 'confirm';
+    subject?: string;
     grades: string[];
     subCity?: string;
     locationDetail?: string | null;
@@ -40,12 +48,15 @@ const WEEKS_PER_MONTH = 4.33;
 
 // In-memory drafts. If the bot restarts mid-form, the agency sends /new again.
 const drafts = new Map<number, Draft>();
+const templateDrafts = new Map<number, string>();
 
 async function findAgency(username: string | undefined) {
     if (!username) return null;
     const { rows } = await pool.query(
-        `SELECT id, name, "telegramUsername", "postHeader", "postFooter"
-         FROM "Organization" WHERE lower("telegramUsername") = lower($1) AND status = 'ACTIVE'`,
+        `SELECT id, name, "telegramUsername", "postTemplate"
+     FROM "Organization"
+     WHERE lower("telegramUsername") = lower($1)
+       AND status = 'ACTIVE'`,
         [username]
     );
     return rows[0] ?? null;
@@ -110,31 +121,33 @@ function salaryLine(d: Draft): string {
 
 // The offer as tutors will read it. Each detail is on its own line.
 function offerLines(d: Draft): string[] {
-    const genderLabel = d.gender === 'MALE' ? 'Male' : d.gender === 'FEMALE' ? 'Female' : 'Any';
-    const lines: string[] = [];
+    const offer: CardOffer = {
+        title: `Tutor (${listLabel(d.grades, GRADES, 'All Grades', 'Not specified')})`,
+        subject: d.subject ?? null,
+        gradeLevels: d.grades,
+        subCity: d.subCity ?? '',
+        locationDetail: d.locationDetail ?? null,
+        sessionsPerWeek: d.sessionsPerWeek ?? 0,
+        sessionHours: d.sessionHours ?? null,
+        salaryUnit: d.unit ?? 'MONTH',
+        salaryAmountEtb: d.amount ?? 0,
+        monthlySalaryEtb: monthlyOf(d),
+        preferredTutorGender: d.gender ?? null,
+        requirements: d.requirements ?? null,
+        postTemplate: d.postTemplate,
+        agencyUsername: d.orgUsername,
+        agencyName: d.orgName,
+    };
 
-    if (d.postHeader) lines.push(d.postHeader, '');
-
-    lines.push(
-        `Grades: ${listLabel(d.grades, GRADES, 'All Grades', 'Not specified')}`,
-        `Area: ${d.subCity}`
-    );
-    if (d.locationDetail) lines.push(`Location: ${d.locationDetail}`);
-    lines.push(
-        `Sessions: ${d.sessionsPerWeek} per week`,
-        `Session length: ${d.sessionHours} hours`,
-        `Pay: ${salaryLine(d)}`,
-        `Tutor gender: ${genderLabel}`
-    );
-    if (d.requirements) lines.push(`Requirements: ${d.requirements}`);
-    lines.push(`Contact: @${d.orgUsername}`);
-
-    if (d.postFooter) lines.push('', d.postFooter);
-    return lines;
+    return offerCardText(offer, 'OPEN').split('\n');
 }
 
 async function ask(ctx: Context, d: Draft) {
     switch (d.step) {
+        case 'subject':
+            return ctx.reply(
+                'Which subject is this offer for? For example: Mathematics, Physics, English.'
+            );
         case 'grades':
             return ctx.reply('Which grades? Pick one or more, or tap All.', {
                 reply_markup: multiKeyboard('grd', GRADES, d.grades),
@@ -180,6 +193,31 @@ async function ask(ctx: Context, d: Draft) {
 }
 
 export function registerAgencyHandlers(bot: Bot) {
+    bot.command('template', async (ctx) => {
+        const agency = await findAgency(ctx.from?.username);
+
+        if (!agency) {
+            return ctx.reply('This account is not registered as an active agency.');
+        }
+
+        templateDrafts.set(ctx.from!.id, agency.id);
+
+        await ctx.reply(
+            'Your current offer template:\n\n' +
+            (agency.postTemplate || DEFAULT_OFFER_TEMPLATE)
+        );
+
+        return ctx.reply(
+            'Now send your complete replacement template in one message. ' +
+            'You can arrange the text, emojis and placeholders however you want.\n\n' +
+            'Send /cancel to cancel.\n\n' +
+            'Available placeholders:\n' +
+            Object.entries(OFFER_PLACEHOLDERS)
+                .map(([key, description]) => `{${key}} - ${description}`)
+                .join('\n')
+        );
+    });
+
     bot.command('new', async (ctx) => {
         const agency = await findAgency(ctx.from?.username);
         if (!agency) {
@@ -190,9 +228,8 @@ export function registerAgencyHandlers(bot: Bot) {
             orgId: agency.id,
             orgName: agency.name,
             orgUsername: agency.telegramUsername,
-            postHeader: agency.postHeader ?? null,
-            postFooter: agency.postFooter ?? null,
-            step: 'grades',
+            postTemplate: agency.postTemplate ?? null,
+            step: 'subject',
             grades: [],
         };
         drafts.set(ctx.from!.id, draft);
@@ -295,13 +332,15 @@ export function registerAgencyHandlers(bot: Bot) {
         try {
             await pool.query(
                 `INSERT INTO "TutoringOffer"
-                 ("organizationId", "title", "gradeLevel", "gradeLevels",
-                  "subCity", "locationDetail", "monthlySalaryEtb", "salaryUnit", "salaryAmountEtb",
-                  "sessionHours", "sessionsPerWeek", "preferredTutorGender", "requirements", "status")
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'OPEN')`,
+     ("organizationId", "title", "subject", "gradeLevel", "gradeLevels",
+      "subCity", "locationDetail", "monthlySalaryEtb", "salaryUnit",
+      "salaryAmountEtb", "sessionHours", "sessionsPerWeek",
+      "preferredTutorGender", "requirements", "status")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'OPEN')`,
                 [
                     d.orgId,
                     title,
+                    d.subject,
                     d.grades[0] ?? 'Not specified',
                     d.grades,
                     d.subCity,
@@ -341,10 +380,65 @@ export function registerAgencyHandlers(bot: Bot) {
 
         const text = ctx.message.text.trim();
 
+        // Save a complete custom offer template.
+        if (templateDrafts.has(ctx.from.id)) {
+            if (text === '/cancel') {
+                templateDrafts.delete(ctx.from.id);
+                return ctx.reply('Template editing cancelled. Your previous template is unchanged.');
+            }
+
+            if (text.startsWith('/')) return next();
+
+            if (text.length > 3500) {
+                return ctx.reply('Please keep your template under 3,500 characters.');
+            }
+
+            const unknown = validateOfferTemplate(text);
+
+            if (unknown.length > 0) {
+                return ctx.reply(
+                    `Unknown placeholder(s): ${unknown.map((x) => `{${x}}`).join(', ')}\n\n` +
+                    'Use only the placeholders listed when you started /template.'
+                );
+            }
+
+            if (!/\{[^{}]+\}/.test(text)) {
+                return ctx.reply(
+                    'Your template must contain at least one supported placeholder, such as {SUBJECT} or {GRADES}.'
+                );
+            }
+
+            const orgId = templateDrafts.get(ctx.from.id)!;
+
+            await pool.query(
+                `UPDATE "Organization"
+         SET "postTemplate" = $2
+         WHERE id = $1 AND "telegramUserId" = $3`,
+                [orgId, text, ctx.from.id]
+            );
+
+            templateDrafts.delete(ctx.from.id);
+
+            return ctx.reply(
+                'Your offer template has been saved. Your next offers will use this layout.\n\n' +
+                'You can change it any time with /template.'
+            );
+        }
+
         // A command ends the offer in progress.
         if (text.startsWith('/')) {
             drafts.delete(ctx.from.id);
             return next();
+        }
+
+        if (d.step === 'subject') {
+            if (text.length < 2 || text.length > 120) {
+                return ctx.reply('Please enter a subject between 2 and 120 characters.');
+            }
+
+            d.subject = text;
+            d.step = 'grades';
+            return ask(ctx, d);
         }
 
         if (d.step === 'location') {

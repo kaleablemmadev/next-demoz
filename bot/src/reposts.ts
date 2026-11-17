@@ -1,30 +1,15 @@
 // src/reposts.ts
 
 import { pool } from './db.js';
-import { GRADES } from './curriculum.js';
 import { Bot, InlineKeyboard, type Api } from 'grammy';
+import { offerCardText, type CardOffer } from './card.js';
 
 const CHECK_EVERY_MS = 60 * 1000;
 const WEEKS_PER_MONTH = 4.33;
 
-type PostOffer = {
+type PostOffer = CardOffer & {
     id: string;
-    title: string;
-    gradeLevels: string[];
-    subCity: string;
-    locationDetail: string | null;
-    sessionsPerWeek: number;
-    sessionHours: number | null;
-    salaryUnit: 'MONTH' | 'HOUR';
-    salaryAmountEtb: number;
-    monthlySalaryEtb: number;
-    preferredTutorGender: 'MALE' | 'FEMALE' | null;
-    requirements: string | null;
     status: string;
-    agencyName: string;
-    agencyUsername: string;
-    postHeader: string | null;
-    postFooter: string | null;
     groupChatId: string | null;
     channelChatId: string | null;
     groupMessageId: string | null;
@@ -35,12 +20,15 @@ type PostOffer = {
 
 // Same select for posting and for closing, so both see the same fields.
 const OFFER_SELECT = `
-    SELECT t.id, t.title, t."gradeLevels", t."subCity", t."locationDetail",
-           t."sessionsPerWeek", t."sessionHours", t."salaryUnit", t."salaryAmountEtb",
-           t."monthlySalaryEtb", t."preferredTutorGender", t.requirements, t.status,
+    SELECT t.id, t.title, t.subject, t."gradeLevels", t."subCity",
+           t."locationDetail", t."sessionsPerWeek", t."sessionHours",
+           t."salaryUnit", t."salaryAmountEtb", t."monthlySalaryEtb",
+           t."preferredTutorGender", t.requirements, t.status,
            t."groupMessageId", t."channelMessageId",
-           o.name AS "agencyName", o."telegramUsername" AS "agencyUsername",
-           o."postHeader", o."postFooter", o."groupChatId", o."channelChatId", o."telegramUserId",
+           o.name AS "agencyName",
+           o."telegramUsername" AS "agencyUsername",
+           o."postTemplate", o."groupChatId", o."channelChatId",
+           o."telegramUserId",
            COALESCE(o."postDestination", 'GROUP') AS "postDestination"
     FROM "TutoringOffer" t
     JOIN "Organization" o ON o.id = t."organizationId"`;
@@ -48,46 +36,6 @@ const OFFER_SELECT = `
 async function loadOffer(id: string): Promise<PostOffer | null> {
     const { rows } = await pool.query<PostOffer>(`${OFFER_SELECT} WHERE t.id = $1`, [id]);
     return rows[0] ?? null;
-}
-
-// "All Subjects" when every option is included, the list otherwise.
-function listLabel(items: string[], all: readonly string[], allLabel: string): string {
-    if (items.length === 0 || all.every((x) => items.includes(x))) return allLabel;
-    return items.join(', ');
-}
-
-// Rounds a number to the nearest step, for example nearest 50 or nearest 5.
-function roundTo(value: number, step: number): number {
-    return Math.round(value / step) * step;
-}
-
-function payLine(o: PostOffer): string {
-    if (o.salaryUnit === 'HOUR') {
-        return `${o.salaryAmountEtb.toLocaleString()} ETB per hour (about ${o.monthlySalaryEtb.toLocaleString()} ETB per month)`;
-    }
-    const hoursPerMonth = (o.sessionHours ?? 0) * o.sessionsPerWeek * WEEKS_PER_MONTH;
-    const perHour = hoursPerMonth > 0 ? roundTo(o.salaryAmountEtb / hoursPerMonth, 5) : 0;
-    return `${o.salaryAmountEtb.toLocaleString()} ETB per month (about ${perHour.toLocaleString()} ETB per hour)`;
-}
-
-// The offer card, with one detail per line. Used for every group or channel post.
-function cardText(o: PostOffer): string {
-    const genderLabel = o.preferredTutorGender === 'MALE' ? 'Male' : o.preferredTutorGender === 'FEMALE' ? 'Female' : 'Any';
-    const lines: string[] = [o.postHeader ?? 'Open tutoring offer', ''];
-
-    lines.push(
-        `Grades: ${listLabel(o.gradeLevels, GRADES, 'All Grades')}`,
-        `Area: ${o.subCity}`
-    );
-    if (o.locationDetail) lines.push(`Location: ${o.locationDetail}`);
-    lines.push(`Sessions: ${o.sessionsPerWeek} per week`);
-    if (o.sessionHours) lines.push(`Session length: ${o.sessionHours} hours`);
-    lines.push(`Pay: ${payLine(o)}`, `Tutor gender: ${genderLabel}`);
-    if (o.requirements) lines.push(`Requirements: ${o.requirements}`);
-    lines.push(`Contact: @${o.agencyUsername}`);
-    if (o.postFooter) lines.push('', o.postFooter);
-
-    return lines.join('\n');
 }
 
 // Which chats an offer goes to, based on the agency's setting.
@@ -134,7 +82,7 @@ async function postDueOffers(bot: Bot): Promise<void> {
 
         for (const target of targets(o)) {
             try {
-                const message = await bot.api.sendMessage(target.chatId, cardText(o), {
+                const message = await bot.api.sendMessage(target.chatId, offerCardText(o, 'OPEN'), {
                     reply_markup: offerButtons(o),
                 });
                 if (target.kind === 'group') groupMessageId = message.message_id;
@@ -221,7 +169,7 @@ export function registerRepostHandlers(bot: Bot) {
             [o.id]
         );
 
-        const closedText = `${cardText(o)}\n\nCLOSED`;
+        const closedText = offerCardText(o, 'CLOSED');
         const places = [
             { chat: o.groupChatId, message: o.groupMessageId },
             { chat: o.channelChatId, message: o.channelMessageId },
@@ -286,7 +234,7 @@ export async function closeOfferEverywhere(api: Api, offerId: string): Promise<v
         [o.id]
     );
 
-    const closedText = `${cardText(o)}\n\nCLOSED`;
+    const closedText = offerCardText(o, 'CLOSED');
     const places = [
         { chat: o.groupChatId, message: o.groupMessageId },
         { chat: o.channelChatId, message: o.channelMessageId },
