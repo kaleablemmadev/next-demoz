@@ -3,8 +3,8 @@
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
 import { tutorLeaveKeyboard } from './leave.js';
-import { isAgency, showAgencyMenu, showRolePicker, AGENCY_HELP } from './roles.js';
-import { WELCOME_MESSAGE } from './welcome.js';
+import { resolveRole, showAgencyMenu, showParentMenu, AGENCY_HELP, PARENT_HELP, setChatCommands, TUTOR_COMMANDS, AGENCY_COMMANDS, PARENT_COMMANDS } from './roles.js';
+import { showAdminMenu, ADMIN_HELP, ADMIN_COMMANDS } from './admin.js';
 
 const MENU_TEXT =
     'NextTutor menu\n\n' +
@@ -35,12 +35,24 @@ function resetQuestion() {
 
 export function registerMenuHandlers(bot: Bot) {
     bot.command('menu', async (ctx) => {
-        if (await isAgency(ctx)) return showAgencyMenu(ctx);
-        return ctx.reply(MENU_TEXT, { reply_markup: menuKeyboard() });
+        const role = await resolveRole(ctx);
+        if (role === 'admin') return showAdminMenu(ctx);
+        if (role === 'agency') return showAgencyMenu(ctx);
+        if (role === 'parent') return showParentMenu(ctx);
+        if (role === 'tutor') {
+            await setChatCommands(ctx, TUTOR_COMMANDS);
+            return ctx.reply(MENU_TEXT, { reply_markup: menuKeyboard() });
+        }
+        return showRolePicker(ctx);
     });
 
     bot.command('help', async (ctx) => {
-        await ctx.reply((await isAgency(ctx)) ? AGENCY_HELP : HELP_TEXT);
+        const role = await resolveRole(ctx);
+        if (role === 'admin') { await setChatCommands(ctx, ADMIN_COMMANDS); return ctx.reply(ADMIN_HELP); }
+        if (role === 'agency') { await setChatCommands(ctx, AGENCY_COMMANDS); return ctx.reply(AGENCY_HELP); }
+        if (role === 'parent') { await setChatCommands(ctx, PARENT_COMMANDS); return ctx.reply(PARENT_HELP); }
+        if (role === 'tutor') { await setChatCommands(ctx, TUTOR_COMMANDS); return ctx.reply(HELP_TEXT); }
+        return showRolePicker(ctx);
     });
 
     bot.callbackQuery('menu:help', async (ctx) => {
@@ -101,7 +113,6 @@ export function registerMenuHandlers(bot: Bot) {
 
     bot.callbackQuery('start:new', async (ctx) => {
         await ctx.answerCallbackQuery();
-        await ctx.reply(WELCOME_MESSAGE);
         await showRolePicker(ctx);
     });
 }
