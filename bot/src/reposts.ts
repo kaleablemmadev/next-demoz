@@ -1,6 +1,7 @@
 // src/reposts.ts
 
 import { pool } from './db.js';
+import type { PoolClient } from 'pg';
 import { Bot, InlineKeyboard, type Api } from 'grammy';
 import { offerCardText, type CardOffer } from './card.js';
 
@@ -214,9 +215,10 @@ export function startRepostScheduler(bot: Bot) {
     const run = async () => {
         if (running) return;
         running = true;
-        const client = await pool.connect();
+        let client: PoolClient | null = null;
         let locked = false;
         try {
+            client = await pool.connect();
             const result = await client.query<{ locked: boolean }>(
                 'SELECT pg_try_advisory_lock(hashtext($1)) AS locked',
                 ['nexttutor:repost-scheduler']
@@ -227,10 +229,10 @@ export function startRepostScheduler(bot: Bot) {
         } catch (err) {
             console.error('Repost check failed:', err);
         } finally {
-            if (locked) {
+            if (locked && client) {
                 await client.query('SELECT pg_advisory_unlock(hashtext($1))', ['nexttutor:repost-scheduler']).catch(() => undefined);
             }
-            client.release();
+            client?.release();
             running = false;
         }
     };
