@@ -30,10 +30,19 @@ export async function askGrades(ctx: Context) {
     });
 }
 
+const lastGradeTap = new Map<number, { key: string; at: number }>();
+
 export function registerGradeHandlers(bot: Bot) {
     bot.callbackQuery(/^grade:(.+)$/, async (ctx) => {
         const id = ctx.from.id;
         const action = ctx.match[1];
+        const previous = lastGradeTap.get(id);
+        const now = Date.now();
+        if (previous?.key === action && now - previous.at < 700) {
+            await ctx.answerCallbackQuery({ text: 'Already processing that tap.' });
+            return;
+        }
+        lastGradeTap.set(id, { key: action, at: now });
 
         if (action === 'DONE') {
             const selected = await selectedGrades(id);
