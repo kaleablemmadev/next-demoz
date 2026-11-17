@@ -38,27 +38,16 @@ export async function ensureParent(ctx: Context): Promise<{ id: string; contactH
     const telegramId = ctx.from!.id;
     const contact = username ? `@${username}` : null;
 
-    const { rows: existing } = await pool.query<{ id: string; contactHandle: string | null }>(
-        `SELECT id, "contactHandle" FROM "Parent" WHERE "telegramId" = $1`,
-        [telegramId]
-    );
-    if (existing[0]) {
-        const current = existing[0];
-        if (contact && current.contactHandle !== contact) {
-            await pool.query(
-                `UPDATE "Parent" SET "telegramUsername" = $2, "contactHandle" = $3 WHERE id = $1`,
-                [current.id, username, contact]
-            );
-        }
-        return { id: current.id, contactHandle: contact ?? current.contactHandle };
-    }
-
-    const { rows } = await pool.query<{ id: string }>(
+    const { rows } = await pool.query<{ id: string; contactHandle: string | null }>(
         `INSERT INTO "Parent" (id, "telegramId", "telegramUsername", "contactHandle")
-         VALUES (gen_random_uuid()::text, $1, $2, $3) RETURNING id`,
+         VALUES (gen_random_uuid()::text, $1, $2, $3)
+         ON CONFLICT ("telegramId") DO UPDATE
+         SET "telegramUsername" = EXCLUDED."telegramUsername",
+             "contactHandle" = COALESCE(EXCLUDED."contactHandle", "Parent"."contactHandle")
+         RETURNING id, "contactHandle"`,
         [telegramId, username, contact]
     );
-    return { id: rows[0].id, contactHandle: contact };
+    return { id: rows[0].id, contactHandle: rows[0].contactHandle };
 }
 
 async function ask(ctx: Context, d: Draft) {
