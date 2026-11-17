@@ -328,7 +328,7 @@ export function registerAdminHandlers(bot: Bot) {
             const id = (ctx.match as RegExpMatchArray)[1];
             const outcome = await withTransaction(async (client) => {
                 const { rows } = await client.query<{ name: string; auditRef: string }>(
-                    `SELECT name, "auditRef" FROM "Organization" WHERE id = $1 FOR UPDATE`,
+                    `SELECT name, "auditRef", "telegramUserId" FROM "Organization" WHERE id = $1 FOR UPDATE`,
                     [id],
                 );
                 if (!rows[0]) return { deleted: false, missing: true, name: null };
@@ -351,6 +351,13 @@ export function registerAdminHandlers(bot: Bot) {
                     entityType: 'ORGANIZATION',
                     entityRef: id,
                 });
+                await client.query(`DELETE FROM "LeaveRequest" WHERE "organizationId" = $1`, [id]);
+                await client.query(`DELETE FROM "OrganizationEvent" WHERE "organizationId" = $1`, [id]);
+                if (rows[0].telegramUserId) {
+                    await client.query(`DELETE FROM "Feedback" WHERE "fromTelegramId" = $1`, [rows[0].telegramUserId]);
+                    await client.query(`DELETE FROM "BusinessSignup" WHERE "telegramId" = $1`, [rows[0].telegramUserId]);
+                    await client.query(`DELETE FROM "SignupChat" WHERE "telegramId" = $1`, [rows[0].telegramUserId]);
+                }
                 await client.query(`DELETE FROM "Organization" WHERE id = $1`, [id]);
                 return { deleted: true, missing: false, name: rows[0].name };
             });
