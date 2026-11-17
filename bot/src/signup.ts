@@ -401,7 +401,8 @@ async function finishSignup(
             entityType: 'ORGANIZATION',
             entityRef: orgId,
             metadata: { status: 'PENDING_APPROVAL' },
-            await client.query(`DELETE FROM "SignupChat" WHERE "telegramId" = $1`, [s.telegramId]);
+        });
+        await client.query(`DELETE FROM "SignupChat" WHERE "telegramId" = $1`, [s.telegramId]);
         await client.query(`DELETE FROM "BusinessSignup" WHERE "telegramId" = $1`, [s.telegramId]);
     });
 
