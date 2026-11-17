@@ -223,10 +223,10 @@ export function registerAgencyHandlers(bot: Bot) {
         );
     });
 
-    bot.command('cancel', async (ctx) => {
+    bot.command('cancel', async (ctx, next) => {
         const hadOffer = drafts.delete(ctx.from!.id);
         const hadTemplate = templateDrafts.delete(ctx.from!.id);
-        if (!hadOffer && !hadTemplate) return ctx.reply('There is no active form to cancel.');
+        if (!hadOffer && !hadTemplate) return next();
         return ctx.reply('Cancelled. No changes were saved.');
     });
 
