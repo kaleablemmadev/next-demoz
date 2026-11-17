@@ -239,26 +239,49 @@ export function registerParentHandlers(bot: Bot) {
         drafts.delete(ctx.from.id);
 
         try {
-            if (d.contactHandle) {
-                await pool.query(`UPDATE "Parent" SET "contactHandle" = $2 WHERE id = $1`, [d.parentId, d.contactHandle]);
-            }
-            await pool.query(
-                `INSERT INTO "ParentRequest"
-                 (id, "parentId", "createdBy", subject, "gradeLevel", "subCity", "locationDetail",
-                  "weakSubjects", "sessionsPerWeek", "budgetEtb", "preferredTutorGender", notes, status, "createdAt")
-                 VALUES (gen_random_uuid()::text, $1, 'PARENT', NULL, $2, $3, $4, $5, $6, $7, $8, $9, 'OPEN', now())`,
-                [
-                    d.parentId,
-                    d.gradeLevel,
-                    d.subCity,
-                    d.locationDetail ?? null,
-                    d.weakSubjects ?? null,
-                    d.sessionsPerWeek,
-                    d.budgetEtb,
-                    d.preferredTutorGender ?? null,
-                    d.notes ?? null,
-                ]
-            );
+            await withTransaction(async (client) => {
+                const { rows: parentRows } = await client.query<{ auditRef: string }>(
+                    `SELECT "auditRef" FROM "Parent" WHERE id = $1 FOR UPDATE`,
+                    [d.parentId],
+                );
+                if (!parentRows[0]) throw new Error('Parent account no longer exists.');
+
+                if (d.contactHandle) {
+                    await client.query(
+                        `UPDATE "Parent" SET "contactHandle" = $2 WHERE id = $1`,
+                        [d.parentId, d.contactHandle],
+                    );
+                }
+
+                const { rows: requests } = await client.query<{ id: string }>(
+                    `INSERT INTO "ParentRequest"
+                     (id, "parentId", "createdBy", subject, "gradeLevel", "subCity", "locationDetail",
+                      "weakSubjects", "sessionsPerWeek", "budgetEtb", "preferredTutorGender", notes, status, "createdAt")
+                     VALUES (gen_random_uuid()::text, $1, 'PARENT', NULL, $2, $3, $4, $5, $6, $7, $8, $9, 'OPEN', now())
+                     RETURNING id`,
+                    [
+                        d.parentId,
+                        d.gradeLevel,
+                        d.subCity,
+                        d.locationDetail ?? null,
+                        d.weakSubjects ?? null,
+                        d.sessionsPerWeek,
+                        d.budgetEtb,
+                        d.preferredTutorGender ?? null,
+                        d.notes ?? null,
+                    ],
+                );
+
+                if (requests[0]) {
+                    await recordAuditEvent(client, {
+                        actorRef: parentRows[0].auditRef,
+                        actorType: 'PARENT',
+                        action: 'REQUEST_CREATED',
+                        entityType: 'PARENT_REQUEST',
+                        entityRef: requests[0].id,
+                    });
+                }
+            });
         } catch (err) {
             drafts.set(ctx.from.id, d);
             throw err;
