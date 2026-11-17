@@ -3,7 +3,6 @@
 import 'dotenv/config';
 import http from 'node:http';
 import { Bot, webhookCallback } from 'grammy';
-import { registerSubjectHandlers } from './subjects.js';
 import { registerOnboardingHandlers, startTutorOnboarding } from './onboarding.js';
 import { registerGradeHandlers } from './grades.js';
 import { registerSalaryHandlers } from './salary.js';
@@ -56,7 +55,6 @@ registerWelcomeHandlers(bot);
 
 registerAdminHandlers(bot);
 registerSignupHandlers(bot);
-registerSubjectHandlers(bot);
 registerGradeHandlers(bot);
 registerPlacementHandlers(bot);
 registerSalaryHandlers(bot);

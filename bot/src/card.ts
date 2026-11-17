@@ -1,13 +1,11 @@
 // src/card.ts
 
-import { SUBJECTS } from './subjects.js';
 import { GRADES } from './curriculum.js';
 
 const WEEKS_PER_MONTH = 4.33;
 
 export type CardOffer = {
     title: string;
-    subjects: string[];
     gradeLevels: string[];
     subCity: string;
     locationDetail: string | null;
@@ -28,9 +26,9 @@ function roundTo(value: number, step: number): number {
     return Math.round(value / step) * step;
 }
 
-// "All Subjects" when every option is included, the list otherwise.
-function listLabel(items: string[], all: readonly string[], allLabel: string): string {
-    if (items.length === 0 || all.every((x) => items.includes(x))) return allLabel;
+// "All Grades" when every option is included, the list otherwise.
+function gradeLabel(items: string[]): string {
+    if (items.length === 0 || GRADES.every((x) => items.includes(x))) return 'All Grades';
     return items.join(', ');
 }
 
@@ -48,11 +46,7 @@ export function offerCardText(o: CardOffer, defaultHeader = 'New tutoring offer'
     const genderLabel = o.preferredTutorGender === 'MALE' ? 'Male' : o.preferredTutorGender === 'FEMALE' ? 'Female' : 'Any';
     const lines: string[] = [o.postHeader ?? defaultHeader, ''];
 
-    lines.push(
-        `Subjects: ${listLabel(o.subjects, SUBJECTS, 'All Subjects')}`,
-        `Grades: ${listLabel(o.gradeLevels, GRADES, 'All Grades')}`,
-        `Area: ${o.subCity}`
-    );
+    lines.push(`Grades: ${gradeLabel(o.gradeLevels)}`, `Area: ${o.subCity}`);
     if (o.locationDetail) lines.push(`Location: ${o.locationDetail}`);
     lines.push(`Sessions: ${o.sessionsPerWeek} per week`);
     if (o.sessionHours) lines.push(`Session length: ${o.sessionHours} hours`);
@@ -64,7 +58,7 @@ export function offerCardText(o: CardOffer, defaultHeader = 'New tutoring offer'
     return lines.join('\n');
 }
 
-// One line with subjects, grades and area, for the digest.
+// One line with grades and area, for the digest.
 export function summaryLine(o: CardOffer): string {
-    return `${listLabel(o.subjects, SUBJECTS, 'All Subjects')} · ${listLabel(o.gradeLevels, GRADES, 'All Grades')} · ${o.subCity}`;
+    return `${gradeLabel(o.gradeLevels)} · ${o.subCity}`;
 }

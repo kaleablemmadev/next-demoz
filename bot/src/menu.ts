@@ -8,7 +8,7 @@ import { WELCOME_MESSAGE } from './welcome.js';
 
 const MENU_TEXT =
     'NextTutor menu\n\n' +
-    '/search - find open offers by subject, grade, area and gender\n' +
+    '/search - find open offers by grade, area and gender\n' +
     '/settings - pause, resume or stop offer alerts\n' +
     '/help - what each function does\n' +
     '/reset - erase all your data and start again\n\n' +
@@ -16,12 +16,12 @@ const MENU_TEXT =
 
 const HELP_TEXT =
     'NextTutor functions\n\n' +
-    '/start - Register as a tutor. Choose your area, subjects, grades, gender and minimum salary.\n' +
+    '/start - Register as a tutor. Choose your area, grades, gender and minimum salary.\n' +
     '/menu - Show the main menu.\n' +
-    '/search - Search open offers. Pick subjects, grades, areas and gender, then tap Show offers. Multi-select works, and All selects every option.\n' +
+    '/search - Search open offers. Pick grades, areas and gender, then tap Show offers. Multi-select works, and All selects every option.\n' +
     '/settings - Pause, resume or stop offer alerts.\n' +
     '/gender - Change your gender. This affects which offers match you.\n' +
-    '/reset - Erase all your data, including subjects, grades, area, gender, settings and sent offers. Then you can register again.\n' +
+    '/reset - Erase all your data, including grades, area, gender, settings and sent offers. Then you can register again.\n' +
     '/help - Show this list.\n\n' +
     'You get an alert when a new offer matches you, and a list of matching offers every Monday morning.';
 
@@ -53,7 +53,7 @@ export function registerMenuHandlers(bot: Bot) {
             return ctx.reply('Agency accounts have no tutor data to erase.');
         }
         return ctx.reply(
-            'This erases everything the bot knows about you: your subjects, grades, area, gender, alert settings and the offers already sent to you. Are you sure?',
+            'This erases everything the bot knows about you: your grades, area, gender, alert settings and the offers already sent to you. Are you sure?',
             { reply_markup: resetQuestion() }
         );
     };

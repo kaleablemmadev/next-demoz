@@ -4,20 +4,17 @@ import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
 import { KNOWN_SUB_CITIES } from '../../shared/rules/nearby-areas.js';
 import { offerMatchesSearch, type SearchFilters } from '../../shared/rules/search.js';
-import { SUBJECTS } from './subjects.js';
 import { GRADES } from './curriculum.js';
 import { offerText, type OpenOffer } from './offers.js';
 
-type Field = 'subjects' | 'grades' | 'areas';
+type Field = 'grades' | 'areas';
 
 const OPTIONS: Record<Field, readonly string[]> = {
-    subjects: SUBJECTS,
     grades: GRADES,
     areas: KNOWN_SUB_CITIES,
 };
 
 const LABEL: Record<Field, string> = {
-    subjects: 'Subjects',
     grades: 'Grades',
     areas: 'Areas',
 };
@@ -25,28 +22,26 @@ const LABEL: Record<Field, string> = {
 // Each searcher's current filters. Lost on restart, so they send /search again.
 const filters = new Map<number, SearchFilters>();
 
-// Start from the searcher's own subjects, grades and area. Gender starts at Any.
+// Start from the searcher's own grades and area. Gender starts at Any.
 async function fromProfile(telegramId: number): Promise<SearchFilters> {
     const { rows } = await pool.query(
-        `SELECT "subCity", subjects, grades FROM "TelegramSubscriber" WHERE "telegramId" = $1`,
+        `SELECT "subCity", grades FROM "TelegramSubscriber" WHERE "telegramId" = $1`,
         [telegramId]
     );
     const me = rows[0];
     return {
-        subjects: me?.subjects ?? [],
         grades: me?.grades ?? [],
         areas: me?.subCity ? [me.subCity] : [],
         gender: null,
     };
 }
 
-function menuText(f: SearchFilters): string {
+function menuText(): string {
     return 'Search offers. Change any filter, then tap Show offers.';
 }
 
 function menuKeyboard(f: SearchFilters) {
     return new InlineKeyboard()
-        .text(`Subjects: ${f.subjects.length || 'any'}`, 'sr:pick:subjects').row()
         .text(`Grades: ${f.grades.length || 'any'}`, 'sr:pick:grades').row()
         .text(`Areas: ${f.areas.length || 'any'}`, 'sr:pick:areas').row()
         .text(`Gender: ${f.gender ? (f.gender === 'MALE' ? 'Male' : 'Female') : 'any'}`, 'sr:gender').row()
@@ -56,9 +51,9 @@ function menuKeyboard(f: SearchFilters) {
 
 async function showMenu(ctx: Context, f: SearchFilters, edit: boolean) {
     if (edit) {
-        return ctx.editMessageText(menuText(f), { reply_markup: menuKeyboard(f) });
+        return ctx.editMessageText(menuText(), { reply_markup: menuKeyboard(f) });
     }
-    return ctx.reply(menuText(f), { reply_markup: menuKeyboard(f) });
+    return ctx.reply(menuText(), { reply_markup: menuKeyboard(f) });
 }
 
 function pickKeyboard(field: Field, selected: string[]) {
@@ -70,10 +65,6 @@ function pickKeyboard(field: Field, selected: string[]) {
     kb.row().text('All', `sr:all:${field}`).text('Clear', `sr:clear:${field}`);
     kb.row().text('Done', 'sr:menu');
     return kb;
-}
-
-function selectedFor(f: SearchFilters, field: Field): string[] {
-    return f[field];
 }
 
 export function registerSearchHandlers(bot: Bot) {
@@ -94,17 +85,17 @@ export function registerSearchHandlers(bot: Bot) {
         return f;
     }
 
-    bot.callbackQuery(/^sr:pick:(subjects|grades|areas)$/, async (ctx) => {
+    bot.callbackQuery(/^sr:pick:(grades|areas)$/, async (ctx) => {
         const f = await current(ctx);
         if (!f) return;
         const field = ctx.match[1] as Field;
         await ctx.answerCallbackQuery();
         await ctx.editMessageText(`Choose ${LABEL[field].toLowerCase()}:`, {
-            reply_markup: pickKeyboard(field, selectedFor(f, field)),
+            reply_markup: pickKeyboard(field, f[field]),
         });
     });
 
-    bot.callbackQuery(/^sr:toggle:(subjects|grades|areas):(.+)$/, async (ctx) => {
+    bot.callbackQuery(/^sr:toggle:(grades|areas):(.+)$/, async (ctx) => {
         const f = await current(ctx);
         if (!f) return;
         const field = ctx.match[1] as Field;
@@ -115,7 +106,7 @@ export function registerSearchHandlers(bot: Bot) {
         await ctx.editMessageReplyMarkup({ reply_markup: pickKeyboard(field, f[field]) });
     });
 
-    bot.callbackQuery(/^sr:all:(subjects|grades|areas)$/, async (ctx) => {
+    bot.callbackQuery(/^sr:all:(grades|areas)$/, async (ctx) => {
         const f = await current(ctx);
         if (!f) return;
         const field = ctx.match[1] as Field;
@@ -124,7 +115,7 @@ export function registerSearchHandlers(bot: Bot) {
         await ctx.editMessageReplyMarkup({ reply_markup: pickKeyboard(field, f[field]) });
     });
 
-    bot.callbackQuery(/^sr:clear:(subjects|grades|areas)$/, async (ctx) => {
+    bot.callbackQuery(/^sr:clear:(grades|areas)$/, async (ctx) => {
         const f = await current(ctx);
         if (!f) return;
         const field = ctx.match[1] as Field;
@@ -162,7 +153,7 @@ export function registerSearchHandlers(bot: Bot) {
         await ctx.answerCallbackQuery();
 
         const { rows } = await pool.query(`
-            SELECT t.id, t.title, t.subjects, t."gradeLevels", t."subCity", t."locationDetail",
+            SELECT t.id, t.title, t."gradeLevels", t."subCity", t."locationDetail",
                    t."sessionsPerWeek", t."sessionHours", t."salaryUnit", t."salaryAmountEtb",
                    t."monthlySalaryEtb", t."preferredTutorGender", t.requirements,
                    o."postHeader", o."postFooter", o.name AS "agencyName",

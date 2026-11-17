@@ -3,7 +3,6 @@
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
 import { KNOWN_SUB_CITIES } from '../../shared/rules/nearby-areas.js';
-import { SUBJECTS } from './subjects.js';
 import { GRADES } from './curriculum.js';
 
 type Unit = 'MONTH' | 'HOUR';
@@ -16,18 +15,16 @@ type Draft = {
     postHeader: string | null;
     postFooter: string | null;
     step:
-        | 'subjects'
-        | 'grades'
-        | 'area'
-        | 'location'
-        | 'sessions'
-        | 'unit'
-        | 'amount'
-        | 'hours'
-        | 'gender'
-        | 'requirements'
-        | 'confirm';
-    subjects: string[];
+    | 'grades'
+    | 'area'
+    | 'location'
+    | 'sessions'
+    | 'unit'
+    | 'amount'
+    | 'hours'
+    | 'gender'
+    | 'requirements'
+    | 'confirm';
     grades: string[];
     subCity?: string;
     locationDetail?: string | null;
@@ -77,7 +74,7 @@ export function hourlyOf(d: Draft): number {
     return d.amount ?? 0;
 }
 
-// Shows "All Subjects" when every option is picked, the list otherwise, and emptyLabel when none.
+// Shows "All Grades" when every grade is picked, the list otherwise, and emptyLabel when none.
 function listLabel(items: string[], all: readonly string[], allLabel: string, emptyLabel: string): string {
     if (items.length === 0) return emptyLabel;
     if (all.every((x) => items.includes(x))) return allLabel;
@@ -92,7 +89,6 @@ function multiKeyboard(kind: string, options: readonly string[], selected: strin
     });
     kb.row().text('All', `ag:${kind}:ALL`).text('Clear', `ag:${kind}:CLEAR`);
     kb.row().text('Done', `ag:${kind}:DONE`);
-    if (kind === 'sub') kb.row().text('Skip', 'ag:skip:subjects');
     return kb;
 }
 
@@ -120,7 +116,6 @@ function offerLines(d: Draft): string[] {
     if (d.postHeader) lines.push(d.postHeader, '');
 
     lines.push(
-        `Subjects: ${listLabel(d.subjects, SUBJECTS, 'All Subjects', 'Not specified')}`,
         `Grades: ${listLabel(d.grades, GRADES, 'All Grades', 'Not specified')}`,
         `Area: ${d.subCity}`
     );
@@ -140,10 +135,6 @@ function offerLines(d: Draft): string[] {
 
 async function ask(ctx: Context, d: Draft) {
     switch (d.step) {
-        case 'subjects':
-            return ctx.reply('Which subjects? Pick one or more, tap All, or tap Skip.', {
-                reply_markup: multiKeyboard('sub', SUBJECTS, d.subjects),
-            });
         case 'grades':
             return ctx.reply('Which grades? Pick one or more, or tap All.', {
                 reply_markup: multiKeyboard('grd', GRADES, d.grades),
@@ -177,9 +168,10 @@ async function ask(ctx: Context, d: Draft) {
                 reply_markup: choices('gen', [['Any', 'ANY'], ['Male', 'MALE'], ['Female', 'FEMALE']], 3),
             });
         case 'requirements':
-            return ctx.reply('Optional: type any requirements for the tutor, such as experience. Or tap Skip.', {
-                reply_markup: new InlineKeyboard().text('Skip', 'ag:skip:requirements'),
-            });
+            return ctx.reply(
+                'Optional: preferred subject proficiency for the tutor, for example "Math strong, English basic". Or tap Skip.',
+                { reply_markup: new InlineKeyboard().text('Skip', 'ag:skip:requirements') }
+            );
         case 'confirm':
             return ctx.reply(`Please check the offer:\n\n${offerLines(d).join('\n')}`, {
                 reply_markup: new InlineKeyboard().text('Post offer', 'ag:post:yes').text('Cancel', 'ag:post:no'),
@@ -200,52 +192,42 @@ export function registerAgencyHandlers(bot: Bot) {
             orgUsername: agency.telegramUsername,
             postHeader: agency.postHeader ?? null,
             postFooter: agency.postFooter ?? null,
-            step: 'subjects',
-            subjects: [],
+            step: 'grades',
             grades: [],
         };
         drafts.set(ctx.from!.id, draft);
         await ask(ctx, draft);
     });
 
-    // Subject and grade multi-select.
-    bot.callbackQuery(/^ag:(sub|grd):(.+)$/, async (ctx) => {
+    // Grade multi-select.
+    bot.callbackQuery(/^ag:grd:(.+)$/, async (ctx) => {
         const d = drafts.get(ctx.from.id);
         if (!d) {
             await ctx.answerCallbackQuery();
             return ctx.reply('Send /new to start a new offer.');
         }
 
-        const [, kind, value] = ctx.match as RegExpMatchArray;
-        const isSub = kind === 'sub';
-        const options = isSub ? SUBJECTS : GRADES;
-        const list = isSub ? d.subjects : d.grades;
+        const [, value] = ctx.match as RegExpMatchArray;
 
         if (value === 'DONE') {
-            // Subjects are optional. Grades need at least one.
-            if (isSub && list.length === 0) list.push(...SUBJECTS);
-            if (!isSub && list.length === 0) {
+            if (d.grades.length === 0) {
                 return ctx.answerCallbackQuery({ text: 'Pick at least one grade.' });
             }
             await ctx.answerCallbackQuery();
-            const label = isSub
-                ? listLabel(list, SUBJECTS, 'All Subjects', 'Not specified')
-                : listLabel(list, GRADES, 'All Grades', 'Not specified');
-            await ctx.editMessageText(`${isSub ? 'Subjects' : 'Grades'}: ${label}`);
-            d.step = isSub ? 'grades' : 'area';
+            await ctx.editMessageText(`Grades: ${listLabel(d.grades, GRADES, 'All Grades', 'Not specified')}`);
+            d.step = 'area';
             return ask(ctx, d);
         }
 
         let next: string[];
-        if (value === 'ALL') next = [...options];
+        if (value === 'ALL') next = [...GRADES];
         else if (value === 'CLEAR') next = [];
-        else next = list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
+        else next = d.grades.includes(value) ? d.grades.filter((v) => v !== value) : [...d.grades, value];
 
-        if (isSub) d.subjects = next;
-        else d.grades = next;
+        d.grades = next;
 
         await ctx.answerCallbackQuery();
-        await ctx.editMessageReplyMarkup({ reply_markup: multiKeyboard(kind, options, next) });
+        await ctx.editMessageReplyMarkup({ reply_markup: multiKeyboard('grd', GRADES, next) });
     });
 
     // Single-choice buttons.
@@ -277,7 +259,7 @@ export function registerAgencyHandlers(bot: Bot) {
     });
 
     // Skip buttons for the optional steps.
-    bot.callbackQuery(/^ag:skip:(subjects|location|requirements)$/, async (ctx) => {
+    bot.callbackQuery(/^ag:skip:(location|requirements)$/, async (ctx) => {
         const d = drafts.get(ctx.from.id);
         if (!d) {
             await ctx.answerCallbackQuery();
@@ -285,10 +267,7 @@ export function registerAgencyHandlers(bot: Bot) {
         }
 
         const [, field] = ctx.match as RegExpMatchArray;
-        if (field === 'subjects') {
-            d.subjects = [...SUBJECTS];
-            d.step = 'grades';
-        } else if (field === 'location') {
+        if (field === 'location') {
             d.locationDetail = null;
             d.step = 'sessions';
         } else {
@@ -310,23 +289,20 @@ export function registerAgencyHandlers(bot: Bot) {
         // Remove the draft before saving, so a second tap cannot post the same offer again.
         drafts.delete(ctx.from.id);
 
-        const subjectsText = listLabel(d.subjects, SUBJECTS, 'All Subjects', 'Any subject');
         const gradesText = listLabel(d.grades, GRADES, 'All Grades', 'Any grade');
-        const title = `${subjectsText} tutor (${gradesText})`;
+        const title = `Tutor (${gradesText})`;
 
         try {
             await pool.query(
                 `INSERT INTO "TutoringOffer"
-                 ("organizationId", "title", "subject", "gradeLevel", "subjects", "gradeLevels",
+                 ("organizationId", "title", "gradeLevel", "gradeLevels",
                   "subCity", "locationDetail", "monthlySalaryEtb", "salaryUnit", "salaryAmountEtb",
                   "sessionHours", "sessionsPerWeek", "preferredTutorGender", "requirements", "status")
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'OPEN')`,
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'OPEN')`,
                 [
                     d.orgId,
                     title,
-                    d.subjects[0] ?? 'Not specified',
                     d.grades[0] ?? 'Not specified',
-                    d.subjects,
                     d.grades,
                     d.subCity,
                     d.locationDetail ?? null,

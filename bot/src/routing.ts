@@ -11,7 +11,7 @@ const CHECK_EVERY_MS = 60_000;
 
 type OpenRequest = {
     id: string;
-    subject: string;
+    weakSubjects: string | null;
     gradeLevel: string;
     subCity: string;
     locationDetail: string | null;
@@ -63,7 +63,7 @@ function requestText(r: OpenRequest): string {
     return [
         'New tutoring request',
         '',
-        `Subject: ${r.subject}`,
+        `Weak subjects: ${r.weakSubjects ?? 'Not specified'}`,
         `Grade: ${r.gradeLevel}`,
         `Area: ${r.subCity}`,
         r.locationDetail ? `Location: ${r.locationDetail}` : null,
@@ -90,7 +90,7 @@ async function clearMessage(bot: Bot, chatId: string | null, messageId: number |
 // Sends one request to the next eligible agency. Returns false if no agency is eligible.
 export async function routeRequest(bot: Bot, requestId: string): Promise<boolean> {
     const { rows } = await pool.query<OpenRequest>(
-        `SELECT id, subject, "gradeLevel", "subCity", "locationDetail", "sessionsPerWeek",
+                `SELECT id, "weakSubjects", "gradeLevel", "subCity", "locationDetail", "sessionsPerWeek",
                 "budgetEtb", "preferredTutorGender", notes
          FROM "ParentRequest" WHERE id = $1 AND status IN ('OPEN', 'ASSIGNED')`,
         [requestId]

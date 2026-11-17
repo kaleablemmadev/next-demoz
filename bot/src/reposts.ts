@@ -1,7 +1,6 @@
 // src/reposts.ts
 
 import { pool } from './db.js';
-import { SUBJECTS } from './subjects.js';
 import { GRADES } from './curriculum.js';
 import { Bot, InlineKeyboard, type Api } from 'grammy';
 
@@ -11,7 +10,6 @@ const WEEKS_PER_MONTH = 4.33;
 type PostOffer = {
     id: string;
     title: string;
-    subjects: string[];
     gradeLevels: string[];
     subCity: string;
     locationDetail: string | null;
@@ -37,7 +35,7 @@ type PostOffer = {
 
 // Same select for posting and for closing, so both see the same fields.
 const OFFER_SELECT = `
-    SELECT t.id, t.title, t.subjects, t."gradeLevels", t."subCity", t."locationDetail",
+    SELECT t.id, t.title, t."gradeLevels", t."subCity", t."locationDetail",
            t."sessionsPerWeek", t."sessionHours", t."salaryUnit", t."salaryAmountEtb",
            t."monthlySalaryEtb", t."preferredTutorGender", t.requirements, t.status,
            t."groupMessageId", t."channelMessageId",
@@ -78,7 +76,6 @@ function cardText(o: PostOffer): string {
     const lines: string[] = [o.postHeader ?? 'Open tutoring offer', ''];
 
     lines.push(
-        `Subjects: ${listLabel(o.subjects, SUBJECTS, 'All Subjects')}`,
         `Grades: ${listLabel(o.gradeLevels, GRADES, 'All Grades')}`,
         `Area: ${o.subCity}`
     );
@@ -147,16 +144,7 @@ async function postDueOffers(bot: Bot): Promise<void> {
             }
         }
 
-        async function deleteOldPost(bot: Bot, chatId: string | null, messageId: string | null, offerId: string) {
-            if (!chatId || !messageId) return;
-            try {
-                await bot.api.deleteMessage(Number(chatId), Number(messageId));
-            } catch (err) {
-                console.error(`Could not delete old post for offer ${offerId}:`, err);
-            }
-        }
-
-        // A new copy was posted, so remove the previous copies to keep one live post.
+        // A new post went out, so remove the previous one in each chat.
         if (groupMessageId !== null) await deleteOldPost(bot, o.groupChatId, o.groupMessageId, o.id);
         if (channelMessageId !== null) await deleteOldPost(bot, o.channelChatId, o.channelMessageId, o.id);
 
@@ -203,6 +191,16 @@ async function postDueOffers(bot: Bot): Promise<void> {
         } catch (err) {
             console.error(`Could not message agency @${o.agencyUsername} about paused offer ${o.id}:`, err);
         }
+    }
+}
+
+// Deletes an old group or channel post. Best effort: a failure is logged and the repost still goes out.
+async function deleteOldPost(bot: Bot, chatId: string | null, messageId: string | null, offerId: string) {
+    if (!chatId || !messageId) return;
+    try {
+        await bot.api.deleteMessage(Number(chatId), Number(messageId));
+    } catch (err) {
+        console.error(`Could not delete old post for offer ${offerId}:`, err);
     }
 }
 

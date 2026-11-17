@@ -13,7 +13,6 @@ export type AlertOffer = CardOffer & {
 type Subscriber = {
     telegramId: string;
     subCity: string;
-    subjects: string[];
     grades: string[];
     minSalaryEtb: number | null;
     gender: 'MALE' | 'FEMALE' | null;
@@ -22,7 +21,7 @@ type Subscriber = {
 // Active subscribers who haven't paused alerts or switched off offer alerts.
 async function alertableSubscribers(): Promise<Subscriber[]> {
     const { rows } = await pool.query(`
-        SELECT s."telegramId"::text AS "telegramId", s."subCity", s.subjects, s.grades, s."minSalaryEtb", s.gender
+        SELECT s."telegramId"::text AS "telegramId", s."subCity", s.grades, s."minSalaryEtb", s.gender
         FROM "TelegramSubscriber" s
         WHERE s."subCity" IS NOT NULL
           AND (
@@ -49,10 +48,9 @@ export async function sendOfferAlerts(bot: Bot, offer: AlertOffer): Promise<numb
 
     for (const sub of await alertableSubscribers()) {
         const matches = tutorMatchesOffer(
-            { subCity: sub.subCity, subjects: sub.subjects, grades: sub.grades, minSalaryEtb: sub.minSalaryEtb, gender: sub.gender },
+            { subCity: sub.subCity, grades: sub.grades, minSalaryEtb: sub.minSalaryEtb, gender: sub.gender },
             {
                 subCity: offer.subCity,
-                subjects: offer.subjects,
                 gradeLevels: offer.gradeLevels,
                 monthlyEtb: offer.monthlySalaryEtb,
                 preferredGender: offer.preferredTutorGender,

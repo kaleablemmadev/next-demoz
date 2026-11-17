@@ -29,7 +29,7 @@ export const AGENCY_COMMANDS = [
 
 export const AGENCY_HELP =
     'NextTutor agency functions\n\n' +
-    '/new - Post a new tutoring offer. You choose subjects, grades, sub-city, optional location, sessions, pay, optional hours, gender and optional requirements. Then you review and post.\n' +
+    '/new - Post a new tutoring offer. You choose grades, sub-city, optional location, sessions, pay, optional hours, gender and optional requirements. Then you review and post.\n' +
     '/menu - Show the agency menu.\n' +
     '/help - Show this list.\n\n' +
     'Your offers are sent to matching tutors. If your channel is set up, they are also posted there.';

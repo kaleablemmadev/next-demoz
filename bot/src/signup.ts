@@ -161,7 +161,6 @@ async function notifyAdmin(ctx: Context, text: string, keyboard?: InlineKeyboard
 async function showSample(api: Api, chatId: number, username: string, header: string | null, footer: string | null) {
     const sample: CardOffer = {
         title: 'Sample offer',
-        subjects: ['Mathematics', 'Physics'],
         gradeLevels: ['Grade 8'],
         subCity: 'Bole',
         locationDetail: null,

@@ -2,110 +2,129 @@
 
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
-import { SUBJECTS, GRADES } from './curriculum.js';
 import { KNOWN_SUB_CITIES } from '../../shared/rules/nearby-areas.js';
+import { GRADES } from './curriculum.js';
 
-const ADMIN_TELEGRAM_ID = Number(process.env.ADMIN_TELEGRAM_ID ?? 0);
-
-type Step = 'contact' | 'subject' | 'grade' | 'area' | 'location' | 'sessions' | 'budget' | 'gender' | 'notes' | 'confirm';
+type Step =
+    | 'contact' | 'grade' | 'area' | 'location' | 'weak'
+    | 'sessions' | 'budget' | 'gender' | 'notes' | 'confirm';
 
 type Draft = {
     parentId: string;
     contactHandle: string | null;
     step: Step;
-    subject?: string;
     gradeLevel?: string;
     subCity?: string;
     locationDetail?: string | null;
+    weakSubjects?: string | null;
     sessionsPerWeek?: number;
     budgetEtb?: number;
     preferredTutorGender?: 'MALE' | 'FEMALE' | null;
     notes?: string | null;
 };
 
-// Each choice button sends its position in one of these lists, so callback data stays short.
-const CHOICES: Record<string, string[]> = {
-    s: [...SUBJECTS],
-    g: [...GRADES],
-    a: [...KNOWN_SUB_CITIES],
-    n: ['2', '3', '4', '5'],
-    x: ['ANY', 'MALE', 'FEMALE'],
-};
-const GENDER_LABEL: Record<string, string> = { ANY: 'Any', MALE: 'Male', FEMALE: 'Female' };
-
-// Parent requests waiting to be confirmed, keyed by Telegram user ID. Lost on restart, so they send /post again.
+// In-memory drafts. If the bot restarts mid-form, the parent sends /post again.
 const drafts = new Map<number, Draft>();
 
-// Creates the parent on first use. Updates the username on later visits.
+const ADMIN_ID = Number(process.env.ADMIN_TELEGRAM_ID);
+const SESSIONS = [2, 3, 4, 5] as const;
+const GENDERS = ['ANY', 'MALE', 'FEMALE'] as const;
+
+// Creates or updates the Parent row for this Telegram user and returns its id.
 async function ensureParent(ctx: Context): Promise<{ id: string; contactHandle: string | null }> {
-    const { rows } = await pool.query(
-        `INSERT INTO "Parent" ("telegramId", "telegramUsername", "contactHandle")
-         VALUES ($1, $2, $3)
-         ON CONFLICT ("telegramId") DO UPDATE SET "telegramUsername" = EXCLUDED."telegramUsername"
-         RETURNING id, "contactHandle"`,
-        [ctx.from!.id, ctx.from!.username ?? null, ctx.from!.username ? `@${ctx.from!.username}` : null]
-    );
-    return rows[0];
-}
+    const username = ctx.from?.username ?? null;
+    const telegramId = ctx.from!.id;
+    const contact = username ? `@${username}` : null;
 
-function choiceKeyboard(kind: string, perRow = 2) {
-    const kb = new InlineKeyboard();
-    CHOICES[kind].forEach((value, i) => {
-        const label = kind === 'x' ? GENDER_LABEL[value] : value;
-        kb.text(label, `pr:${kind}:${i}`);
-        if ((i + 1) % perRow === 0) kb.row();
-    });
-    return kb;
-}
-
-function summary(d: Draft): string {
-    const lines = [
-        'Please check your request:',
-        '',
-        `Subject: ${d.subject}`,
-        `Grade: ${d.gradeLevel}`,
-        `Area: ${d.subCity}`,
-    ];
-    if (d.locationDetail) lines.push(`Location: ${d.locationDetail}`);
-    lines.push(
-        `Sessions: ${d.sessionsPerWeek} per week`,
-        `Budget: ${d.budgetEtb?.toLocaleString()} ETB per month`,
-        `Tutor gender: ${d.preferredTutorGender ? GENDER_LABEL[d.preferredTutorGender] : 'Any'}`
+    const { rows: existing } = await pool.query<{ id: string; contactHandle: string | null }>(
+        `SELECT id, "contactHandle" FROM "Parent" WHERE "telegramId" = $1`,
+        [telegramId]
     );
-    if (d.notes) lines.push(`Notes: ${d.notes}`);
-    lines.push('', 'Your contact is shared only with the agency that pays. Agencies do not see it before payment.');
-    return lines.join('\n');
+    if (existing[0]) {
+        const current = existing[0];
+        if (contact && current.contactHandle !== contact) {
+            await pool.query(
+                `UPDATE "Parent" SET "telegramUsername" = $2, "contactHandle" = $3 WHERE id = $1`,
+                [current.id, username, contact]
+            );
+        }
+        return { id: current.id, contactHandle: contact ?? current.contactHandle };
+    }
+
+    const { rows } = await pool.query<{ id: string }>(
+        `INSERT INTO "Parent" (id, "telegramId", "telegramUsername", "contactHandle")
+         VALUES (gen_random_uuid()::text, $1, $2, $3) RETURNING id`,
+        [telegramId, username, contact]
+    );
+    return { id: rows[0].id, contactHandle: contact };
 }
 
 async function ask(ctx: Context, d: Draft) {
     switch (d.step) {
         case 'contact':
-            return ctx.reply('Please type your phone number or a name, so an agency can reach you. Only the agency that pays will see it.');
-        case 'subject':
-            return ctx.reply('Which subject?', { reply_markup: choiceKeyboard('s') });
+            return ctx.reply('Send a phone number or Telegram @username so the agency can reach you.');
         case 'grade':
-            return ctx.reply('Which grade?', { reply_markup: choiceKeyboard('g', 3) });
+            return ctx.reply('Which grade is the child in?', {
+                reply_markup: choices('g', GRADES.map((g) => [g, g]), 3),
+            });
         case 'area':
-            return ctx.reply('Which sub-city?', { reply_markup: choiceKeyboard('a', 3) });
+            return ctx.reply('Which sub-city?', {
+                reply_markup: choices('a', KNOWN_SUB_CITIES.map((c) => [c, c]), 3),
+            });
         case 'location':
-            return ctx.reply('Optional: a nearby landmark or school. Type it, or tap Skip.', {
+            return ctx.reply('Optional: type a location detail, such as a nearby landmark. Or tap Skip.', {
                 reply_markup: new InlineKeyboard().text('Skip', 'pr:skip:location'),
             });
+        case 'weak':
+            return ctx.reply(
+                'Optional: which subjects does the child find difficult? Type them, for example "Math, English". Or tap Skip.',
+                { reply_markup: new InlineKeyboard().text('Skip', 'pr:skip:weak') }
+            );
         case 'sessions':
-            return ctx.reply('How many sessions per week?', { reply_markup: choiceKeyboard('n', 4) });
+            return ctx.reply('How many sessions per week?', {
+                reply_markup: choices('n', SESSIONS.map((n) => [String(n), String(n)]), 4),
+            });
         case 'budget':
-            return ctx.reply('Monthly budget in ETB? Type a number, for example 2500.');
+            return ctx.reply('Monthly budget in ETB? Type a number between 500 and 20000, for example 2500.');
         case 'gender':
-            return ctx.reply('Preferred tutor gender?', { reply_markup: choiceKeyboard('x', 3) });
+            return ctx.reply('Preferred tutor gender?', {
+                reply_markup: choices('x', [['Any', 'ANY'], ['Male', 'MALE'], ['Female', 'FEMALE']], 3),
+            });
         case 'notes':
-            return ctx.reply('Optional: anything else the tutor should know. Type it, or tap Skip.', {
+            return ctx.reply('Optional: anything else the agency should know? Type it, or tap Skip.', {
                 reply_markup: new InlineKeyboard().text('Skip', 'pr:skip:notes'),
             });
         case 'confirm':
-            return ctx.reply(summary(d), {
+            return ctx.reply(`Please check your request:\n\n${summary(d).join('\n')}`, {
                 reply_markup: new InlineKeyboard().text('Send request', 'pr:post:yes').text('Cancel', 'pr:post:no'),
             });
     }
+}
+
+// Buttons send only their index or value, so callback data stays short.
+function choices(prefix: string, options: [string, string][], perRow: number) {
+    const kb = new InlineKeyboard();
+    options.forEach(([label, value], i) => {
+        kb.text(label, `pr:${prefix}:${value}`);
+        if ((i + 1) % perRow === 0) kb.row();
+    });
+    return kb;
+}
+
+function summary(d: Draft): string[] {
+    const gender = d.preferredTutorGender === 'MALE' ? 'Male' : d.preferredTutorGender === 'FEMALE' ? 'Female' : 'Any';
+    return [
+        `Grade: ${d.gradeLevel}`,
+        `Area: ${d.subCity}`,
+        d.locationDetail ? `Location: ${d.locationDetail}` : null,
+        `Weak subjects: ${d.weakSubjects ?? 'Not specified'}`,
+        `Sessions: ${d.sessionsPerWeek} per week`,
+        `Budget: ${d.budgetEtb?.toLocaleString()} ETB per month`,
+        `Tutor gender: ${gender}`,
+        d.notes ? `Notes: ${d.notes}` : null,
+        '',
+        'Your contact is shared only with the agency that pays for your request.',
+    ].filter((line): line is string => line !== null);
 }
 
 export function registerParentHandlers(bot: Bot) {
@@ -114,120 +133,150 @@ export function registerParentHandlers(bot: Bot) {
         const d: Draft = {
             parentId: parent.id,
             contactHandle: parent.contactHandle,
-            step: parent.contactHandle ? 'subject' : 'contact',
+            step: parent.contactHandle ? 'grade' : 'contact',
         };
         drafts.set(ctx.from!.id, d);
-        await ctx.reply('Let us post your tutoring request.');
-        return ask(ctx, d);
+        await ask(ctx, d);
     });
 
-    // Choice buttons: subject, grade, area, sessions, gender.
-    bot.callbackQuery(/^pr:(s|g|a|n|x):(\d+)$/, async (ctx) => {
-        await ctx.answerCallbackQuery();
+    // Single choice buttons: grade, area, sessions, gender.
+    bot.callbackQuery(/^pr:(g|a|n|x):(.+)$/, async (ctx) => {
         const d = drafts.get(ctx.from.id);
-        if (!d) return ctx.reply('Send /post to start a new request.');
+        if (!d) {
+            await ctx.answerCallbackQuery();
+            return ctx.reply('Send /post to start a new request.');
+        }
 
-        const [, kind, idx] = ctx.match as RegExpMatchArray;
-        const value = CHOICES[kind][Number(idx)];
-        if (value === undefined) return;
+        const [, field, value] = ctx.match as RegExpMatchArray;
+        if (field === 'g') {
+            d.gradeLevel = value;
+            d.step = 'area';
+        } else if (field === 'a') {
+            d.subCity = value;
+            d.step = 'location';
+        } else if (field === 'n') {
+            d.sessionsPerWeek = Number(value);
+            d.step = 'budget';
+        } else if (field === 'x') {
+            d.preferredTutorGender = value === 'ANY' ? null : (value as 'MALE' | 'FEMALE');
+            d.step = 'notes';
+        }
 
-        if (kind === 's') { d.subject = value; d.step = 'grade'; }
-        else if (kind === 'g') { d.gradeLevel = value; d.step = 'area'; }
-        else if (kind === 'a') { d.subCity = value; d.step = 'location'; }
-        else if (kind === 'n') { d.sessionsPerWeek = Number(value); d.step = 'budget'; }
-        else { d.preferredTutorGender = value === 'ANY' ? null : (value as 'MALE' | 'FEMALE'); d.step = 'notes'; }
-
-        return ask(ctx, d);
+        await ctx.answerCallbackQuery();
+        await ask(ctx, d);
     });
 
     // Skip buttons for the optional steps.
-    bot.callbackQuery(/^pr:skip:(location|notes)$/, async (ctx) => {
-        await ctx.answerCallbackQuery();
+    bot.callbackQuery(/^pr:skip:(location|weak|notes)$/, async (ctx) => {
         const d = drafts.get(ctx.from.id);
-        if (!d) return ctx.reply('Send /post to start a new request.');
+        if (!d) {
+            await ctx.answerCallbackQuery();
+            return ctx.reply('Send /post to start a new request.');
+        }
 
         const [, field] = ctx.match as RegExpMatchArray;
-        if (field === 'location') { d.locationDetail = null; d.step = 'sessions'; }
-        else { d.notes = null; d.step = 'confirm'; }
+        if (field === 'location') {
+            d.locationDetail = null;
+            d.step = 'weak';
+        } else if (field === 'weak') {
+            d.weakSubjects = null;
+            d.step = 'sessions';
+        } else {
+            d.notes = null;
+            d.step = 'confirm';
+        }
 
-        return ask(ctx, d);
+        await ctx.answerCallbackQuery();
+        await ask(ctx, d);
     });
 
     bot.callbackQuery('pr:post:yes', async (ctx) => {
-        await ctx.answerCallbackQuery();
         const d = drafts.get(ctx.from.id);
-        if (!d) return ctx.reply('Send /post to start a new request.');
+        if (!d) {
+            await ctx.answerCallbackQuery();
+            return ctx.reply('Send /post to start a new request.');
+        }
 
-        // Remove the draft first, so a double tap cannot create two requests.
+        // Remove the draft first, so a second tap cannot send the same request again.
         drafts.delete(ctx.from.id);
+
         try {
-            await pool.query(`UPDATE "Parent" SET "contactHandle" = $2 WHERE id = $1`, [d.parentId, d.contactHandle]);
+            if (d.contactHandle) {
+                await pool.query(`UPDATE "Parent" SET "contactHandle" = $2 WHERE id = $1`, [d.parentId, d.contactHandle]);
+            }
             await pool.query(
                 `INSERT INTO "ParentRequest"
-                 ("parentId", "createdBy", subject, "gradeLevel", "subCity", "locationDetail",
-                  "sessionsPerWeek", "budgetEtb", "preferredTutorGender", notes)
-                 VALUES ($1, 'PARENT', $2, $3, $4, $5, $6, $7, $8, $9)`,
+                 (id, "parentId", "createdBy", subject, "gradeLevel", "subCity", "locationDetail",
+                  "weakSubjects", "sessionsPerWeek", "budgetEtb", "preferredTutorGender", notes, status, "createdAt")
+                 VALUES (gen_random_uuid()::text, $1, 'PARENT', NULL, $2, $3, $4, $5, $6, $7, $8, $9, 'OPEN', now())`,
                 [
-                    d.parentId, d.subject, d.gradeLevel, d.subCity, d.locationDetail ?? null,
-                    d.sessionsPerWeek, d.budgetEtb, d.preferredTutorGender ?? null, d.notes ?? null,
+                    d.parentId,
+                    d.gradeLevel,
+                    d.subCity,
+                    d.locationDetail ?? null,
+                    d.weakSubjects ?? null,
+                    d.sessionsPerWeek,
+                    d.budgetEtb,
+                    d.preferredTutorGender ?? null,
+                    d.notes ?? null,
                 ]
             );
         } catch (err) {
-            drafts.set(ctx.from.id, d); // put the draft back so the parent can try again
+            drafts.set(ctx.from.id, d);
             throw err;
         }
 
-        if (ADMIN_TELEGRAM_ID) {
-            try {
-                await ctx.api.sendMessage(ADMIN_TELEGRAM_ID, `New parent request: ${d.subject}, ${d.gradeLevel}, ${d.subCity}, ${d.budgetEtb} ETB per month.`);
-            } catch (err) {
-                console.error('Could not tell the admin about the parent request:', err);
-            }
-        }
+        await ctx.answerCallbackQuery();
+        await ctx.reply('Your request has been sent. Agencies will be contacted, and you will hear back if one takes it.');
 
-        return ctx.reply('Thank you. Your request was received. We will message you when a tutoring agency is found.');
+        if (ADMIN_ID) {
+            await bot.api.sendMessage(ADMIN_ID, `New parent request:\n\n${summary(d).join('\n')}`).catch((err) =>
+                console.error('Could not notify admin:', err)
+            );
+        }
     });
 
     bot.callbackQuery('pr:post:no', async (ctx) => {
         drafts.delete(ctx.from.id);
         await ctx.answerCallbackQuery();
-        return ctx.reply('Cancelled.');
+        await ctx.reply('Cancelled.');
     });
 
-    // Typed answers: contact, location, budget, notes.
+    // Typed answers. Any command ends the request in progress.
     bot.on('message:text', async (ctx, next) => {
         const d = drafts.get(ctx.from.id);
         if (!d) return next();
 
         const text = ctx.message.text.trim();
-
-        // Any command cancels the request in progress.
         if (text.startsWith('/')) {
             drafts.delete(ctx.from.id);
             return next();
         }
 
         if (d.step === 'contact') {
-            if (text.length < 3 || text.length > 100) {
-                return ctx.reply('Please type a phone number or a name, between 3 and 100 characters.');
-            }
-            d.contactHandle = text;
-            d.step = 'subject';
+            d.contactHandle = text.slice(0, 100);
+            d.step = 'grade';
             return ask(ctx, d);
         }
 
         if (d.step === 'location') {
             d.locationDetail = text.slice(0, 200) || null;
+            d.step = 'weak';
+            return ask(ctx, d);
+        }
+
+        if (d.step === 'weak') {
+            d.weakSubjects = text.slice(0, 300) || null;
             d.step = 'sessions';
             return ask(ctx, d);
         }
 
         if (d.step === 'budget') {
-            const amount = Number(text.replace(/[,\s]/g, ''));
-            if (!Number.isInteger(amount) || amount < 500 || amount > 20000) {
+            const budget = Number(text.replace(/[,\s]/g, ''));
+            if (!Number.isInteger(budget) || budget < 500 || budget > 20000) {
                 return ctx.reply('Please type a whole number between 500 and 20000.');
             }
-            d.budgetEtb = amount;
+            d.budgetEtb = budget;
             d.step = 'gender';
             return ask(ctx, d);
         }
@@ -238,6 +287,6 @@ export function registerParentHandlers(bot: Bot) {
             return ask(ctx, d);
         }
 
-        return ctx.reply('Please use the buttons above, or send /post to start again.');
+        return next();
     });
 }

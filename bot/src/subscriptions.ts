@@ -36,12 +36,12 @@ export function registerSubscriptionHandlers(bot: Bot) {
             );
             if (orgs.length === 0) {
                 await client.query('ROLLBACK');
-                await ctx.reply(`No active agency has the owner username @${handle}.`);
+                await ctx.reply(`No active agency has the username @${handle}.`);
                 return;
             }
             if (orgs.length > 1) {
                 await client.query('ROLLBACK');
-                await ctx.reply(`More than one agency has the owner username @${handle}. Check the records.`);
+                await ctx.reply(`More than one agency has the username @${handle}. Check the records.`);
                 return;
             }
             const org = orgs[0];
