@@ -157,6 +157,7 @@ export function registerSearchHandlers(bot: Bot) {
     });
 
     bot.callbackQuery('sr:reset', async (ctx) => {
+        if (await ignoreRapidRepeat(ctx, 'reset')) return;
         const f = await fromProfile(ctx.from.id);
         filters.set(ctx.from.id, f);
         await ctx.answerCallbackQuery({ text: 'Reset to your profile.' });
@@ -166,6 +167,7 @@ export function registerSearchHandlers(bot: Bot) {
     bot.callbackQuery('sr:show', async (ctx) => {
         const f = await current(ctx);
         if (!f) return;
+        if (await ignoreRapidRepeat(ctx, 'show')) return;
         await ctx.answerCallbackQuery();
 
         const { rows } = await pool.query(`
