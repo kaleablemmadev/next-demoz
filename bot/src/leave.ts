@@ -174,7 +174,7 @@ function adminCallback(handler: (ctx: Context) => Promise<unknown>) {
 }
 
 export function registerLeaveHandlers(bot: Bot) {
-    registerPersonalDepartureCallbacks(bot);
+    registerPersonalDepartureCallbacks(bot, (telegramId) => pending.delete(telegramId));
     bot.command('leave', startLeave);
     bot.command('feedback', startFeedback);
     bot.command('leaverequests', adminOnly(listLeaveRequests));
