@@ -2,9 +2,12 @@
 
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
-import { findAgencyByUsername } from './roles.js';
+import { findAgencyByUsername, findAgencyForUser } from './roles.js';
+import { startPersonalDeparture, registerPersonalDepartureCallbacks } from './account-departure.js';
+import { recordAuditEvent, withTransaction } from './audit.js';
 import { isAdmin } from './admin.js';
-import { closeOfferEverywhere } from './reposts.js';
+import { removeOfferEverywhere } from './reposts.js';
+import { clearAgencySession } from './agency.js';
 
 const ADMIN_TELEGRAM_ID = Number(process.env.ADMIN_TELEGRAM_ID ?? 0);
 
@@ -62,7 +65,7 @@ async function notifyAdmin(ctx: Context, text: string, keyboard?: InlineKeyboard
 }
 
 async function createLeaveRequest(ctx: Context, reason: string, note: string | null) {
-    const agency = await findAgencyByUsername(ctx.from?.username);
+    const agency = ctx.from ? await findAgencyForUser(ctx.from.id, ctx.from.username) : null;
     if (!agency) return ctx.reply('Only registered tutoring businesses can request to leave.');
 
     const { rows } = await pool.query(
@@ -91,8 +94,9 @@ async function createLeaveRequest(ctx: Context, reason: string, note: string | n
 
 // Agency: /leave
 async function startLeave(ctx: Context) {
-    const agency = await findAgencyByUsername(ctx.from?.username);
-    if (!agency) return ctx.reply('Only registered tutoring businesses can request to leave.');
+    if (!ctx.from) return;
+    const agency = await findAgencyForUser(ctx.from.id, ctx.from.username);
+    if (!agency) return startPersonalDeparture(ctx);
 
     const { rows } = await pool.query(
         `SELECT 1 FROM "LeaveRequest" WHERE "organizationId" = $1 AND status = 'PENDING'`,
@@ -156,6 +160,20 @@ async function listFeedback(ctx: Context) {
     return ctx.reply(lines.join('\n\n'));
 }
 
+async function listAuditEvents(ctx: Context) {
+    const { rows } = await pool.query(
+        `SELECT "createdAt", "actorType", action, "entityType", metadata
+         FROM "AuditEvent" ORDER BY "createdAt" DESC LIMIT 20`,
+    );
+    if (rows.length === 0) return ctx.reply('No audit events yet.');
+    const lines = rows.map((row) =>
+        `${new Date(row.createdAt).toISOString().slice(0, 16).replace('T', ' ')} UTC · ${row.actorType} · ${row.action}` +
+        (row.entityType ? ` · ${row.entityType}` : '') +
+        (row.metadata && Object.keys(row.metadata).length ? `\n  ${JSON.stringify(row.metadata)}` : ''),
+    );
+    return ctx.reply(`Latest audit events (newest first):\n\n${lines.join('\n\n')}`);
+}
+
 function adminOnly(handler: (ctx: Context) => Promise<unknown>) {
     return async (ctx: Context) => {
         if (!isAdmin(ctx)) return ctx.reply('This command is for admins only.');
@@ -171,10 +189,12 @@ function adminCallback(handler: (ctx: Context) => Promise<unknown>) {
 }
 
 export function registerLeaveHandlers(bot: Bot) {
+    registerPersonalDepartureCallbacks(bot, (telegramId) => pending.delete(telegramId));
     bot.command('leave', startLeave);
     bot.command('feedback', startFeedback);
     bot.command('leaverequests', adminOnly(listLeaveRequests));
     bot.command('feedbacks', adminOnly(listFeedback));
+    bot.command('auditlogs', adminOnly(listAuditEvents));
 
     // Agency leave reason
     bot.callbackQuery(/^leave:reason:(.+)$/, async (ctx) => {
@@ -227,29 +247,117 @@ export function registerLeaveHandlers(bot: Bot) {
                 return ctx.editMessageText('This request was already handled.');
             }
 
-            await pool.query(
-                `UPDATE "LeaveRequest" SET status = 'APPROVED', "decidedAt" = now(), "settledConfirmed" = true WHERE id = $1`,
-                [requestId]
-            );
-            await pool.query(`UPDATE "Organization" SET status = 'LEFT' WHERE id = $1`, [req.organizationId]);
-            await pool.query(
-                `INSERT INTO "OrganizationEvent" ("organizationId", event) VALUES ($1, 'LEFT')`,
-                [req.organizationId]
-            );
-
             const { rows: offers } = await pool.query(
-                `SELECT id FROM "TutoringOffer" WHERE "organizationId" = $1 AND status = 'OPEN'`,
+                `SELECT id, status FROM "TutoringOffer" WHERE "organizationId" = $1`,
                 [req.organizationId]
             );
-            for (const o of offers) {
-                await closeOfferEverywhere(ctx.api, o.id);
+            const openOfferCount = offers.filter((offer: { status: string }) => offer.status === 'OPEN').length;
+            // Remove every stored public post (open or previously closed) before deleting offer rows.
+            for (const offer of offers) {
+                await removeOfferEverywhere(ctx.api, offer.id);
+            }
+
+            const departure = await withTransaction(async (client) => {
+                const { rows: lockedRequests } = await client.query(
+                    `SELECT id, status, "organizationId" FROM "LeaveRequest" WHERE id = $1 FOR UPDATE`,
+                    [requestId],
+                );
+                const locked = lockedRequests[0];
+                if (!locked || locked.status !== 'PENDING') return { handled: false, retained: false };
+
+                const { rows: organizations } = await client.query(
+                    `SELECT "auditRef" FROM "Organization" WHERE id = $1 FOR UPDATE`,
+                    [req.organizationId],
+                );
+                const organization = organizations[0];
+                if (!organization) return { handled: false, retained: false };
+
+                await recordAuditEvent(client, {
+                    actorRef: organization.auditRef,
+                    actorType: 'AGENCY',
+                    action: 'ACCOUNT_LEFT',
+                    entityType: 'ORGANIZATION',
+                    entityRef: req.organizationId,
+                    metadata: { closedOpenOffers: openOfferCount, removedOfferPosts: offers.length, settlementConfirmed: true },
+                });
+
+                await client.query(
+                    `UPDATE "LeaveRequest"
+                     SET status = 'APPROVED', "decidedAt" = now(), "settledConfirmed" = true
+                     WHERE id = $1`,
+                    [requestId],
+                );
+
+                await client.query(
+                    `DELETE FROM "TutoringOffer" WHERE "organizationId" = $1`,
+                    [req.organizationId],
+                );
+                await client.query(
+                    `DELETE FROM "LeaveRequest" WHERE "organizationId" = $1`,
+                    [req.organizationId],
+                );
+                await client.query(
+                    `DELETE FROM "OrganizationEvent" WHERE "organizationId" = $1`,
+                    [req.organizationId],
+                );
+                if (req.telegramUserId) {
+                    await client.query(`DELETE FROM "Feedback" WHERE "fromTelegramId" = $1`, [req.telegramUserId]);
+                    await client.query(`DELETE FROM "BusinessSignup" WHERE "telegramId" = $1`, [req.telegramUserId]);
+                    await client.query(`DELETE FROM "SignupChat" WHERE "telegramId" = $1`, [req.telegramUserId]);
+                }
+
+                const { rows: references } = await client.query(
+                    `SELECT
+                        EXISTS (SELECT 1 FROM "Assignment" WHERE "organizationId" = $1) AS has_assignments,
+                        EXISTS (SELECT 1 FROM "Subscription" WHERE "organizationId" = $1) AS has_subscriptions`,
+                    [req.organizationId],
+                );
+                const retained = Boolean(references[0]?.has_assignments || references[0]?.has_subscriptions);
+
+                if (retained) {
+                    await client.query(
+                        `UPDATE "Organization"
+                         SET status = 'LEFT',
+                             name = 'Former NextTutor business',
+                             "telegramUsername" = 'former_' || substr(replace("auditRef"::text, '-', ''), 1, 16),
+                             "telegramUserId" = NULL,
+                             "ownerUsername" = NULL,
+                             "channelUsername" = NULL,
+                             description = NULL,
+                             "paymentReference" = NULL,
+                             "groupChatId" = NULL,
+                             "channelChatId" = NULL,
+                             "chatUsername" = NULL,
+                             "setupStep" = NULL,
+                             "verifyCode" = NULL,
+                             "setupExpiresAt" = NULL,
+                             "templateStep" = NULL,
+                             "postHeader" = NULL,
+                             "postFooter" = NULL,
+                             "postTemplate" = NULL,
+                             language = 'EN',
+                             "postDestination" = 'GROUP'
+                         WHERE id = $1`,
+                        [req.organizationId],
+                    );
+                } else {
+                    await client.query(`DELETE FROM "Organization" WHERE id = $1`, [req.organizationId]);
+                }
+                return { handled: true, retained };
+            });
+
+            if (!departure.handled) {
+                await ctx.answerCallbackQuery({ text: 'This request was already handled.', show_alert: true });
+                return ctx.editMessageText('This request was already handled.');
             }
 
             if (req.telegramUserId) {
+                pending.delete(Number(req.telegramUserId));
+                clearAgencySession(Number(req.telegramUserId));
                 try {
                     await ctx.api.sendMessage(
                         Number(req.telegramUserId),
-                        'Your NextTutor account has been closed, as requested. Thank you for using NextTutor.'
+                        'Your NextTutor account has been closed, as requested. Your personal account details have been removed.'
                     );
                 } catch (err) {
                     console.error('Could not tell the agency it has left:', err);
@@ -258,7 +366,10 @@ export function registerLeaveHandlers(bot: Bot) {
 
             await ctx.answerCallbackQuery({ text: 'Approved.' });
             return ctx.editMessageText(
-                `Approved. ${req.name} has left. ${offers.length} open offer(s) closed.`
+                `Approved. ${req.name} has left. ${offers.length} open offer(s) closed. ` +
+                (departure.retained
+                    ? 'An anonymized business record remains for existing placement/subscription history.'
+                    : 'The business account record was deleted.')
             );
         })
     );

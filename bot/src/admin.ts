@@ -3,6 +3,7 @@
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { randomUUID } from 'node:crypto';
 import { pool } from './db.js';
+import { recordAuditEvent, withTransaction } from './audit.js';
 import { closeOfferEverywhere } from './reposts.js';
 
 export const ADMIN_USERNAME = 'next_tutor_admin';
@@ -31,6 +32,7 @@ export const ADMIN_COMMANDS = [
     { command: 'closeoffer', description: 'Close any offer' },
     { command: 'leaverequests', description: 'Leave requests waiting for approval' },
     { command: 'feedbacks', description: 'Latest feedback' },
+    { command: 'auditlogs', description: 'Recent account lifecycle audit events' },
     { command: 'stats', description: 'Counts for tutors, businesses and offers' },
     { command: 'help', description: 'List admin functions' },
 ];
@@ -43,12 +45,13 @@ export const ADMIN_HELP = [
     '/addagency username Business name - add a business',
     '/showagency username - show one business',
     '/editagency username field value - change a field. Fields: name, header, footer, group, channel, destination (GROUP, CHANNEL or BOTH). Use "none" to clear a field.',
-    '/deleteagency username - delete a business that has no offers',
+    '/deleteagency username - delete a business with no offers or placement/subscription history',
     '/pausedoffers - offers paused after failed posts',
     '/resumeoffer offer-id - restart a paused offer',
     '/closeoffer offer-id - close any offer',
     '/leaverequests - leave requests waiting for approval',
     '/feedbacks - latest feedback from tutors and businesses',
+    '/auditlogs - recent account lifecycle events (no personal identifiers)',
     '/stats - counts for tutors, businesses and offers',
     '/admin - show the admin menu',
     '/help - show this list',
@@ -88,6 +91,16 @@ async function findAgency(username: string): Promise<AgencyRow | null> {
         [username]
     );
     return rows[0] ?? null;
+}
+
+async function hasAgencyHistory(orgId: string): Promise<boolean> {
+    const { rows } = await pool.query(
+        `SELECT
+            EXISTS (SELECT 1 FROM "Assignment" WHERE "organizationId" = $1) AS has_assignments,
+            EXISTS (SELECT 1 FROM "Subscription" WHERE "organizationId" = $1) AS has_subscriptions`,
+        [orgId],
+    );
+    return Boolean(rows[0]?.has_assignments || rows[0]?.has_subscriptions);
 }
 
 async function offerCount(orgId: string): Promise<number> {
@@ -294,8 +307,11 @@ export function registerAdminHandlers(bot: Bot) {
             if (offers > 0) {
                 return ctx.reply(
                     `Cannot delete @${agency.telegramUsername}: it has ${offers} offer(s) in the database. ` +
-                    'Keep the business, or remove its offers first.'
+                    'Use the account departure flow so public posts and history are handled safely.'
                 );
+            }
+            if (await hasAgencyHistory(agency.id)) {
+                return ctx.reply('This business has placement or subscription history. Use /leave and the settlement approval flow; its history will be retained in anonymized form.');
             }
 
             return ctx.reply(`Delete ${agency.name} (@${agency.telegramUsername})? This cannot be undone.`, {
@@ -310,21 +326,53 @@ export function registerAdminHandlers(bot: Bot) {
         /^adm:delete:(.+)$/,
         adminCallback(async (ctx) => {
             const id = (ctx.match as RegExpMatchArray)[1];
+            const outcome = await withTransaction(async (client) => {
+                const { rows } = await client.query<{ name: string; auditRef: string }>(
+                    `SELECT name, "auditRef", "telegramUserId" FROM "Organization" WHERE id = $1 FOR UPDATE`,
+                    [id],
+                );
+                if (!rows[0]) return { deleted: false, missing: true, name: null };
 
-            const { rows } = await pool.query(`SELECT name FROM "Organization" WHERE id = $1`, [id]);
-            if (rows.length === 0) {
+                const { rows: checks } = await client.query(
+                    `SELECT
+                        EXISTS (SELECT 1 FROM "TutoringOffer" WHERE "organizationId" = $1) AS has_offers,
+                        EXISTS (SELECT 1 FROM "Assignment" WHERE "organizationId" = $1) AS has_assignments,
+                        EXISTS (SELECT 1 FROM "Subscription" WHERE "organizationId" = $1) AS has_subscriptions`,
+                    [id],
+                );
+                if (checks[0]?.has_offers || checks[0]?.has_assignments || checks[0]?.has_subscriptions) {
+                    return { deleted: false, missing: false, name: rows[0].name };
+                }
+
+                await recordAuditEvent(client, {
+                    actorRef: rows[0].auditRef,
+                    actorType: 'AGENCY',
+                    action: 'ACCOUNT_DELETED_BY_ADMIN',
+                    entityType: 'ORGANIZATION',
+                    entityRef: id,
+                });
+                await client.query(`DELETE FROM "LeaveRequest" WHERE "organizationId" = $1`, [id]);
+                await client.query(`DELETE FROM "OrganizationEvent" WHERE "organizationId" = $1`, [id]);
+                if (rows[0].telegramUserId) {
+                    await client.query(`DELETE FROM "Feedback" WHERE "fromTelegramId" = $1`, [rows[0].telegramUserId]);
+                    await client.query(`DELETE FROM "BusinessSignup" WHERE "telegramId" = $1`, [rows[0].telegramUserId]);
+                    await client.query(`DELETE FROM "SignupChat" WHERE "telegramId" = $1`, [rows[0].telegramUserId]);
+                }
+                await client.query(`DELETE FROM "Organization" WHERE id = $1`, [id]);
+                return { deleted: true, missing: false, name: rows[0].name };
+            });
+
+            if (outcome.missing) {
                 await ctx.answerCallbackQuery();
                 return ctx.editMessageText('That business no longer exists.');
             }
-
-            if ((await offerCount(id)) > 0) {
-                await ctx.answerCallbackQuery({ text: 'It has offers now.', show_alert: true });
-                return ctx.editMessageText('Not deleted: this business now has offers.');
+            if (!outcome.deleted) {
+                await ctx.answerCallbackQuery({ text: 'Offers or history now exist.', show_alert: true });
+                return ctx.editMessageText('Not deleted: offers or placement/subscription history now exist. Use the leave workflow.');
             }
 
-            await pool.query(`DELETE FROM "Organization" WHERE id = $1`, [id]);
             await ctx.answerCallbackQuery({ text: 'Deleted.' });
-            return ctx.editMessageText(`Deleted ${rows[0].name}.`);
+            return ctx.editMessageText(`Deleted ${outcome.name}. An audit event was retained.`);
         })
     );
 

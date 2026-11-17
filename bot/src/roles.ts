@@ -16,6 +16,7 @@ export const TUTOR_COMMANDS = [
     { command: 'settings', description: 'Alert and notification settings' },
     { command: 'gender', description: 'Change my gender' },
     { command: 'feedback', description: 'Send feedback to NextTutor' },
+    { command: 'leave', description: 'Delete my NextTutor account' },
     { command: 'help', description: 'List all functions' },
     { command: 'reset', description: 'Erase my data and start again' },
 ];
@@ -38,6 +39,7 @@ export const PARENT_COMMANDS = [
     { command: 'menu', description: 'Show the parent menu' },
     { command: 'help', description: 'Parent help' },
     { command: 'feedback', description: 'Send feedback to NextTutor' },
+    { command: 'leave', description: 'Delete my NextTutor account' },
 ];
 
 export const AGENCY_HELP =
@@ -56,6 +58,7 @@ export const PARENT_HELP =
     '/cancel - Cancel the current request form.\n' +
     '/menu - Show the parent menu.\n' +
     '/feedback - Send feedback to NextTutor.\n' +
+    '/leave - Delete your parent account and personal data.\n' +
     '/help - Show this list.';
 
 export type UserRole = 'admin' | 'agency' | 'parent' | 'tutor' | 'guest';

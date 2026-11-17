@@ -3,6 +3,7 @@
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { randomUUID } from 'node:crypto';
 import { pool } from './db.js';
+
 import { KNOWN_SUB_CITIES } from '../../shared/rules/nearby-areas.js';
 import { GRADES } from './curriculum.js';
 import {
@@ -52,6 +53,12 @@ const WEEKS_PER_MONTH = 4.33;
 const drafts = new Map<number, Draft>();
 const templateDrafts = new Map<number, string>();
 const lastAgencyGradeTap = new Map<number, { key: string; at: number }>();
+
+export function clearAgencySession(telegramId: number) {
+    drafts.delete(telegramId);
+    templateDrafts.delete(telegramId);
+    lastAgencyGradeTap.delete(telegramId);
+}
 
 async function findAgency(telegramId: number, username: string | undefined) {
     const { rows } = await pool.query(
@@ -361,12 +368,21 @@ export function registerAgencyHandlers(bot: Bot) {
 
         try {
             await pool.query(
-                `INSERT INTO "TutoringOffer"
-     ("organizationId", "title", "subject", "gradeLevel", "gradeLevels",
-      "subCity", "locationDetail", "monthlySalaryEtb", "salaryUnit",
-      "salaryAmountEtb", "sessionHours", "sessionsPerWeek",
-      "preferredTutorGender", "requirements", "status")
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'OPEN')`,
+                `WITH created_offer AS (
+                    INSERT INTO "TutoringOffer"
+                     ("organizationId", "title", "subject", "gradeLevel", "gradeLevels",
+                      "subCity", "locationDetail", "monthlySalaryEtb", "salaryUnit",
+                      "salaryAmountEtb", "sessionHours", "sessionsPerWeek",
+                      "preferredTutorGender", "requirements", "status")
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'OPEN')
+                     RETURNING id, "organizationId"
+                 )
+                 INSERT INTO "AuditEvent"
+                    ("actorRef", "actorType", action, "entityType", "entityRef", metadata)
+                 SELECT o."auditRef", 'AGENCY', 'OFFER_CREATED', 'TUTORING_OFFER',
+                        created_offer.id, '{}'::jsonb
+                 FROM created_offer
+                 JOIN "Organization" o ON o.id = created_offer."organizationId"`,
                 [
                     d.orgId,
                     title,

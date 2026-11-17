@@ -4,6 +4,7 @@
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { randomInt, randomUUID } from 'node:crypto';
 import { pool } from './db.js';
+import { recordAuditEvent, withTransaction } from './audit.js';
 import { isAdmin, ADMIN_USERNAME } from './admin.js';
 
 const ADMIN_TELEGRAM_ID = Number(process.env.ADMIN_TELEGRAM_ID ?? 0);
@@ -363,43 +364,47 @@ async function finishSignup(
 
     const orgId = randomUUID();
 
-    await pool.query(
-        `INSERT INTO "Organization"
-         (
-            id,
-            name,
-            "telegramUsername",
-            "telegramUserId",
-            "ownerUsername",
-            "paymentReference",
-            "groupChatId",
-            "channelChatId",
-            "postDestination",
-            status
-         )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'PENDING_APPROVAL')`,
-        [
-            orgId,
-            s.businessName,
-            s.telegramUsername,
-            Number(s.telegramId),
-            s.ownerUsername,
-            proof ? `${proof.kind}:${proof.fileId}` : null,
-            group?.chatId ?? null,
-            channel?.chatId ?? null,
-            s.destination,
-        ]
-    );
-
-    await pool.query(
-        `DELETE FROM "SignupChat" WHERE "telegramId" = $1`,
-        [s.telegramId]
-    );
-
-    await pool.query(
-        `DELETE FROM "BusinessSignup" WHERE "telegramId" = $1`,
-        [s.telegramId]
-    );
+    await withTransaction(async (client) => {
+        const { rows } = await client.query<{ auditRef: string }>(
+            `INSERT INTO "Organization"
+             (
+                id,
+                name,
+                "telegramUsername",
+                "telegramUserId",
+                "ownerUsername",
+                "paymentReference",
+                "groupChatId",
+                "channelChatId",
+                "postDestination",
+                status
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'PENDING_APPROVAL')
+             RETURNING "auditRef"`,
+            [
+                orgId,
+                s.businessName,
+                s.telegramUsername,
+                Number(s.telegramId),
+                s.ownerUsername,
+                proof ? `${proof.kind}:${proof.fileId}` : null,
+                group?.chatId ?? null,
+                channel?.chatId ?? null,
+                s.destination,
+            ],
+        );
+        if (!rows[0]?.auditRef) throw new Error('Business account was created without an audit reference.');
+        await recordAuditEvent(client, {
+            actorRef: rows[0].auditRef,
+            actorType: 'AGENCY',
+            action: 'ACCOUNT_REGISTERED',
+            entityType: 'ORGANIZATION',
+            entityRef: orgId,
+            metadata: { status: 'PENDING_APPROVAL' },
+        });
+        await client.query(`DELETE FROM "SignupChat" WHERE "telegramId" = $1`, [s.telegramId]);
+        await client.query(`DELETE FROM "BusinessSignup" WHERE "telegramId" = $1`, [s.telegramId]);
+    });
 
     // Forward proof only when a payment was actually required.
     if (proof && ADMIN_TELEGRAM_ID) {
@@ -620,13 +625,27 @@ export function registerSignupHandlers(bot: Bot) {
         adminCallback(async (ctx) => {
             const orgId = (ctx.match as RegExpMatchArray)[1];
 
-            const { rows } = await pool.query(
-                `UPDATE "Organization"
-                 SET status = 'ACTIVE'
-                 WHERE id = $1 AND status = 'PENDING_APPROVAL'
-                 RETURNING name, "telegramUsername", "telegramUserId"`,
-                [orgId]
-            );
+            const rows = await withTransaction(async (client) => {
+                const { rows: updated } = await client.query<{
+                    name: string; telegramUsername: string; telegramUserId: string | null; auditRef: string;
+                }>(
+                    `UPDATE "Organization"
+                     SET status = 'ACTIVE'
+                     WHERE id = $1 AND status = 'PENDING_APPROVAL'
+                     RETURNING name, "telegramUsername", "telegramUserId", "auditRef"`,
+                    [orgId],
+                );
+                if (updated[0]) {
+                    await recordAuditEvent(client, {
+                        actorRef: updated[0].auditRef,
+                        actorType: 'AGENCY',
+                        action: 'ACCOUNT_APPROVED',
+                        entityType: 'ORGANIZATION',
+                        entityRef: orgId,
+                    });
+                }
+                return updated;
+            });
 
             if (rows.length === 0) {
                 await ctx.answerCallbackQuery({
@@ -670,13 +689,27 @@ export function registerSignupHandlers(bot: Bot) {
         adminCallback(async (ctx) => {
             const orgId = (ctx.match as RegExpMatchArray)[1];
 
-            const { rows } = await pool.query(
-                `UPDATE "Organization"
-                 SET status = 'REJECTED'
-                 WHERE id = $1 AND status = 'PENDING_APPROVAL'
-                 RETURNING name, "telegramUsername", "telegramUserId"`,
-                [orgId]
-            );
+            const rows = await withTransaction(async (client) => {
+                const { rows: updated } = await client.query<{
+                    name: string; telegramUsername: string; telegramUserId: string | null; auditRef: string;
+                }>(
+                    `UPDATE "Organization"
+                     SET status = 'REJECTED'
+                     WHERE id = $1 AND status = 'PENDING_APPROVAL'
+                     RETURNING name, "telegramUsername", "telegramUserId", "auditRef"`,
+                    [orgId],
+                );
+                if (updated[0]) {
+                    await recordAuditEvent(client, {
+                        actorRef: updated[0].auditRef,
+                        actorType: 'AGENCY',
+                        action: 'REGISTRATION_REJECTED',
+                        entityType: 'ORGANIZATION',
+                        entityRef: orgId,
+                    });
+                }
+                return updated;
+            });
 
             if (rows.length === 0) {
                 await ctx.answerCallbackQuery({

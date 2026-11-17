@@ -95,6 +95,17 @@ export function registerMenuHandlers(bot: Bot) {
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
+            const { rows: accountRows } = await client.query<{ auditRef: string }>(
+                `SELECT "auditRef" FROM "TelegramSubscriber" WHERE "telegramId" = $1 FOR UPDATE`,
+                [id],
+            );
+            if (accountRows[0]) {
+                await client.query(
+                    `INSERT INTO "AuditEvent" ("actorRef", "actorType", action, "entityType")
+                     VALUES ($1, 'TUTOR', 'ACCOUNT_RESET', 'TUTOR')`,
+                    [accountRows[0].auditRef],
+                );
+            }
             await client.query(
                 `DELETE FROM "OfferDelivery" WHERE "subscriberId" IN (SELECT id FROM "TelegramSubscriber" WHERE "telegramId" = $1)`,
                 [id]

@@ -2,11 +2,25 @@
 
 import { Bot } from 'grammy';
 import { pool } from './db.js';
+import { recordAuditEvent, withTransaction } from './audit.js';
 
-type Org = { id: string; name: string; status: string };
+type Org = { id: string; name: string; status: string; auditRef: string };
 
 async function log(orgId: string, event: 'LEFT' | 'BLOCKED' | 'RETURNED') {
-    await pool.query(`INSERT INTO "OrganizationEvent" ("organizationId", event) VALUES ($1, $2)`, [orgId, event]);
+    await withTransaction(async (client) => {
+        const { rows } = await client.query<{ auditRef: string }>(
+            `SELECT "auditRef" FROM "Organization" WHERE id = $1 FOR UPDATE`,
+            [orgId],
+        );
+        if (!rows[0]) return;
+        await recordAuditEvent(client, {
+            actorRef: rows[0].auditRef,
+            actorType: 'AGENCY',
+            action: event === 'BLOCKED' ? 'BOT_BLOCKED' : event === 'RETURNED' ? 'ACCOUNT_RETURNED' : 'ACCOUNT_LEFT',
+            entityType: 'ORGANIZATION',
+            entityRef: orgId,
+        });
+    });
 }
 
 // Called when an approved leave request marks the agency as LEFT.
@@ -18,23 +32,43 @@ export async function logLeft(orgId: string) {
 // Returns the agency if it is active after the check, otherwise null.
 export async function reactivateIfReturning(telegramUserId: number): Promise<Org | null> {
     const { rows } = await pool.query<Org>(
-        `SELECT id, name, status FROM "Organization" WHERE "telegramUserId" = $1`,
+        `SELECT id, name, status, "auditRef" FROM "Organization" WHERE "telegramUserId" = $1`,
         [telegramUserId]
     );
     const org = rows[0];
     if (!org) return null;
     if (org.status === 'PENDING_APPROVAL' || org.status === 'REJECTED') return null;
 
-    const { rows: last } = await pool.query<{ event: string }>(
-        `SELECT event FROM "OrganizationEvent" WHERE "organizationId" = $1 ORDER BY "createdAt" DESC LIMIT 1`,
-        [org.id]
+    const { rows: lastAudit } = await pool.query<{ action: string }>(
+        `SELECT action FROM "AuditEvent" WHERE "actorRef" = $1 ORDER BY "createdAt" DESC LIMIT 1`,
+        [org.auditRef],
     );
-    const wasAway = org.status === 'LEFT' || last[0]?.event === 'BLOCKED';
+    const { rows: legacyEvents } = await pool.query<{ type: string }>(
+        `SELECT type FROM "OrganizationEvent" WHERE "organizationId" = $1 ORDER BY "createdAt" DESC LIMIT 1`,
+        [org.id],
+    );
+    const wasAway = org.status === 'LEFT' ||
+        lastAudit[0]?.action === 'BOT_BLOCKED' ||
+        legacyEvents[0]?.type === 'BLOCKED';
     if (!wasAway) return org;
 
-    await pool.query(`UPDATE "Organization" SET status = 'ACTIVE' WHERE id = $1`, [org.id]);
-    await log(org.id, 'RETURNED');
-    return { ...org, status: 'ACTIVE' };
+    const reactivated = await withTransaction(async (client) => {
+        const { rows: updated } = await client.query<Org>(
+            `UPDATE "Organization" SET status = 'ACTIVE' WHERE id = $1
+             RETURNING id, name, status, "auditRef"`,
+            [org.id],
+        );
+        if (!updated[0]) return null;
+        await recordAuditEvent(client, {
+            actorRef: updated[0].auditRef,
+            actorType: 'AGENCY',
+            action: 'ACCOUNT_RETURNED',
+            entityType: 'ORGANIZATION',
+            entityRef: org.id,
+        });
+        return updated[0];
+    });
+    return reactivated;
 }
 
 // Watches the agency's private chat with the bot: blocking logs BLOCKED, unblocking brings it back.
@@ -47,7 +81,7 @@ export function registerAgencyLifecycle(bot: Bot) {
         const status = ctx.myChatMember.new_chat_member.status;
 
         const { rows } = await pool.query<Org>(
-            `SELECT id, name, status FROM "Organization" WHERE "telegramUserId" = $1`,
+            `SELECT id, name, status, "auditRef" FROM "Organization" WHERE "telegramUserId" = $1`,
             [telegramId]
         );
         const org = rows[0];

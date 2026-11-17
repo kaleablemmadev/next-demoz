@@ -1,17 +1,30 @@
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
+import { recordAuditEvent, withTransaction } from './audit.js';
 import { KNOWN_SUB_CITIES } from '../../shared/rules/nearby-areas.js';
 import { askGrades } from './grades.js';
 
 export async function startTutorOnboarding(ctx: Context, source = 'direct') {
     const from = ctx.from!;
 
-    await pool.query(
-        `INSERT INTO "TelegramSubscriber" ("telegramId", "firstName", "username", "sourceChannel")
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT ("telegramId") DO NOTHING`,
-        [from.id, from.first_name ?? null, from.username ?? null, source]
-    );
+    await withTransaction(async (client) => {
+        const { rows: created } = await client.query<{ auditRef: string }>(
+            `INSERT INTO "TelegramSubscriber" ("telegramId", "firstName", "username", "sourceChannel")
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT ("telegramId") DO NOTHING
+             RETURNING "auditRef"`,
+            [from.id, from.first_name ?? null, from.username ?? null, source],
+        );
+
+        if (created[0]?.auditRef) {
+            await recordAuditEvent(client, {
+                actorRef: created[0].auditRef,
+                actorType: 'TUTOR',
+                action: 'ACCOUNT_CREATED',
+                entityType: 'TUTOR',
+            });
+        }
+    });
 
     const keyboard = new InlineKeyboard();
     KNOWN_SUB_CITIES.forEach((city, i) => {

@@ -37,6 +37,11 @@ export async function askGrades(ctx: Context) {
 
 const lastGradeTap = new Map<number, { key: string; at: number }>();
 
+export function clearTutorSession(telegramId: number) {
+    activeGradeSessions.delete(telegramId);
+    lastGradeTap.delete(telegramId);
+}
+
 export function registerGradeHandlers(bot: Bot) {
     bot.callbackQuery(/^grade:([^:]+):(.+)$/, async (ctx) => {
         const id = ctx.from.id;
