@@ -28,11 +28,16 @@ export function registerOnboardingHandlers(bot: Bot) {
     bot.callbackQuery(/^area:(.+)$/, async (ctx) => {
         const subCity = ctx.match[1];
 
-        await pool.query(
-            `UPDATE "TelegramSubscriber" SET "subCity" = $1 WHERE "telegramId" = $2`,
+        const { rows } = await pool.query(
+            `UPDATE "TelegramSubscriber" SET "subCity" = $1
+             WHERE "telegramId" = $2 AND "subCity" IS NULL
+             RETURNING "telegramId"`,
             [subCity, ctx.from.id]
         );
-
+        if (rows.length === 0) {
+            await ctx.answerCallbackQuery({ text: 'This setup step has already been completed.' });
+            return;
+        }
         await ctx.answerCallbackQuery();
         await ctx.editMessageText(`Saved: ${subCity}.`);
         await askGrades(ctx);
