@@ -31,6 +31,7 @@ export const ADMIN_COMMANDS = [
     { command: 'closeoffer', description: 'Close any offer' },
     { command: 'leaverequests', description: 'Leave requests waiting for approval' },
     { command: 'feedbacks', description: 'Latest feedback' },
+    { command: 'auditlogs', description: 'Recent account lifecycle audit events' },
     { command: 'stats', description: 'Counts for tutors, businesses and offers' },
     { command: 'help', description: 'List admin functions' },
 ];
@@ -49,6 +50,7 @@ export const ADMIN_HELP = [
     '/closeoffer offer-id - close any offer',
     '/leaverequests - leave requests waiting for approval',
     '/feedbacks - latest feedback from tutors and businesses',
+    '/auditlogs - recent account lifecycle events (no personal identifiers)',
     '/stats - counts for tutors, businesses and offers',
     '/admin - show the admin menu',
     '/help - show this list',
