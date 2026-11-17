@@ -230,7 +230,7 @@ export function registerAgencyHandlers(bot: Bot) {
     });
 
     bot.command('new', async (ctx) => {
-        const agency = await findAgency(ctx.from?.username);
+        const agency = await findAgency(ctx.from!.id, ctx.from?.username);
         if (!agency) {
             return ctx.reply('This account is not registered as an agency.');
         }
