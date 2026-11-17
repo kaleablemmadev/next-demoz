@@ -57,7 +57,11 @@ export function registerMenuHandlers(bot: Bot) {
 
     bot.callbackQuery('menu:help', async (ctx) => {
         await ctx.answerCallbackQuery();
-        await ctx.reply(HELP_TEXT);
+        const role = await resolveRole(ctx);
+        if (role === 'admin') return ctx.reply(ADMIN_HELP);
+        if (role === 'agency') return ctx.reply(AGENCY_HELP);
+        if (role === 'parent') return ctx.reply(PARENT_HELP);
+        return ctx.reply(HELP_TEXT);
     });
 
     const askReset = async (ctx: Context) => {
@@ -83,6 +87,10 @@ export function registerMenuHandlers(bot: Bot) {
     });
 
     bot.callbackQuery('reset:yes', async (ctx) => {
+        if ((await resolveRole(ctx)) !== 'tutor') {
+            await ctx.answerCallbackQuery({ text: 'This action is only available to registered tutors.', show_alert: true });
+            return;
+        }
         const id = ctx.from.id;
         const client = await pool.connect();
         try {
