@@ -53,6 +53,7 @@ export const AGENCY_HELP =
 export const PARENT_HELP =
     'NextTutor parent functions\n\n' +
     '/post - Request a tutor for your child. You will provide the grade, area, schedule, budget and contact details.\n' +
+    '/cancel - Cancel the current request form.\n' +
     '/menu - Show the parent menu.\n' +
     '/feedback - Send feedback to NextTutor.\n' +
     '/help - Show this list.';
