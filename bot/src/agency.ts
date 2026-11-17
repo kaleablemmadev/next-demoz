@@ -200,6 +200,7 @@ export function registerAgencyHandlers(bot: Bot) {
             return ctx.reply('This account is not registered as an active agency.');
         }
 
+        drafts.delete(ctx.from!.id);
         templateDrafts.set(ctx.from!.id, agency.id);
 
         await ctx.reply(
@@ -218,12 +219,20 @@ export function registerAgencyHandlers(bot: Bot) {
         );
     });
 
+    bot.command('cancel', async (ctx) => {
+        const hadOffer = drafts.delete(ctx.from!.id);
+        const hadTemplate = templateDrafts.delete(ctx.from!.id);
+        if (!hadOffer && !hadTemplate) return ctx.reply('There is no active form to cancel.');
+        return ctx.reply('Cancelled. No changes were saved.');
+    });
+
     bot.command('new', async (ctx) => {
         const agency = await findAgency(ctx.from?.username);
         if (!agency) {
             return ctx.reply('This account is not registered as an agency.');
         }
 
+        templateDrafts.delete(ctx.from!.id);
         const draft: Draft = {
             orgId: agency.id,
             orgName: agency.name,
@@ -244,6 +253,7 @@ export function registerAgencyHandlers(bot: Bot) {
             return ctx.reply('Send /new to start a new offer.');
         }
 
+        if (d.step !== 'grades') { await ctx.answerCallbackQuery({ text: 'This step has expired.' }); return; }
         const [, value] = ctx.match as RegExpMatchArray;
 
         if (value === 'DONE') {
@@ -276,6 +286,8 @@ export function registerAgencyHandlers(bot: Bot) {
         }
 
         const [, field, value] = ctx.match as RegExpMatchArray;
+        const expectedStep = field === 'area' ? 'area' : field === 'sess' ? 'sessions' : field === 'unit' ? 'unit' : 'gender';
+        if (d.step !== expectedStep) { await ctx.answerCallbackQuery({ text: 'This step has expired.' }); return; }
 
         if (field === 'area') {
             d.subCity = value;
@@ -304,6 +316,8 @@ export function registerAgencyHandlers(bot: Bot) {
         }
 
         const [, field] = ctx.match as RegExpMatchArray;
+        const expectedStep = field === 'location' ? 'location' : 'requirements';
+        if (d.step !== expectedStep) { await ctx.answerCallbackQuery({ text: 'This step has expired.' }); return; }
         if (field === 'location') {
             d.locationDetail = null;
             d.step = 'sessions';
@@ -323,6 +337,7 @@ export function registerAgencyHandlers(bot: Bot) {
             return ctx.reply('Send /new to start a new offer.');
         }
 
+        if (d.step !== 'confirm') { await ctx.answerCallbackQuery({ text: 'This confirmation has expired.' }); return; }
         // Remove the draft before saving, so a second tap cannot post the same offer again.
         drafts.delete(ctx.from.id);
 
@@ -368,6 +383,8 @@ export function registerAgencyHandlers(bot: Bot) {
     });
 
     bot.callbackQuery('ag:post:no', async (ctx) => {
+        const d = drafts.get(ctx.from.id);
+        if (!d || d.step !== 'confirm') { await ctx.answerCallbackQuery({ text: 'This confirmation has expired.' }); return; }
         drafts.delete(ctx.from.id);
         await ctx.answerCallbackQuery();
         await ctx.reply('Cancelled.');
@@ -375,9 +392,6 @@ export function registerAgencyHandlers(bot: Bot) {
 
     // Typed answers: optional location, pay amount, session hours, requirements.
     bot.on('message:text', async (ctx, next) => {
-        const d = drafts.get(ctx.from.id);
-        if (!d) return next();
-
         const text = ctx.message.text.trim();
 
         // Save a complete custom offer template.
@@ -424,6 +438,11 @@ export function registerAgencyHandlers(bot: Bot) {
                 'You can change it any time with /template.'
             );
         }
+
+
+        const d = drafts.get(ctx.from.id);
+        if (!d) return next();
+
 
         // A command ends the offer in progress.
         if (text.startsWith('/')) {
