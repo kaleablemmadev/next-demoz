@@ -321,10 +321,21 @@ export function registerLeaveHandlers(bot: Bot) {
                              "telegramUsername" = 'former_' || substr(replace("auditRef"::text, '-', ''), 1, 16),
                              "telegramUserId" = NULL,
                              "ownerUsername" = NULL,
+                             "channelUsername" = NULL,
+                             description = NULL,
                              "paymentReference" = NULL,
                              "groupChatId" = NULL,
                              "channelChatId" = NULL,
-                             "postTemplate" = NULL
+                             "chatUsername" = NULL,
+                             "setupStep" = NULL,
+                             "verifyCode" = NULL,
+                             "setupExpiresAt" = NULL,
+                             "templateStep" = NULL,
+                             "postHeader" = NULL,
+                             "postFooter" = NULL,
+                             "postTemplate" = NULL,
+                             language = 'EN',
+                             "postDestination" = 'GROUP'
                          WHERE id = $1`,
                         [req.organizationId],
                     );
