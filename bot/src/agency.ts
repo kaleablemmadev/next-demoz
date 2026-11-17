@@ -51,6 +51,7 @@ const WEEKS_PER_MONTH = 4.33;
 // In-memory drafts. If the bot restarts mid-form, the agency sends /new again.
 const drafts = new Map<number, Draft>();
 const templateDrafts = new Map<number, string>();
+const lastAgencyGradeTap = new Map<number, { key: string; at: number }>();
 
 async function findAgency(telegramId: number, username: string | undefined) {
     const { rows } = await pool.query(
@@ -258,6 +259,13 @@ export function registerAgencyHandlers(bot: Bot) {
         }
 
         const [, sessionId, value] = ctx.match as RegExpMatchArray;
+        const previousTap = lastAgencyGradeTap.get(ctx.from.id);
+        const now = Date.now();
+        if (previousTap?.key === `${sessionId}:${value}` && now - previousTap.at < 700) {
+            await ctx.answerCallbackQuery({ text: 'Already processing that tap.' });
+            return;
+        }
+        lastAgencyGradeTap.set(ctx.from.id, { key: `${sessionId}:${value}`, at: now });
         if (sessionId !== d.id) { await ctx.answerCallbackQuery({ text: 'This form has expired.' }); return; }
         if (d.step !== 'grades') { await ctx.answerCallbackQuery({ text: 'This step has expired.' }); return; }
         if (value === 'DONE') {
