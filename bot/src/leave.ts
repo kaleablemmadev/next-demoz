@@ -7,6 +7,7 @@ import { startPersonalDeparture, registerPersonalDepartureCallbacks } from './ac
 import { recordAuditEvent, withTransaction } from './audit.js';
 import { isAdmin } from './admin.js';
 import { removeOfferEverywhere } from './reposts.js';
+import { clearAgencySession } from './agency.js';
 
 const ADMIN_TELEGRAM_ID = Number(process.env.ADMIN_TELEGRAM_ID ?? 0);
 
@@ -351,6 +352,8 @@ export function registerLeaveHandlers(bot: Bot) {
             }
 
             if (req.telegramUserId) {
+                pending.delete(Number(req.telegramUserId));
+                clearAgencySession(Number(req.telegramUserId));
                 try {
                     await ctx.api.sendMessage(
                         Number(req.telegramUserId),
