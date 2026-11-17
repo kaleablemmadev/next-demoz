@@ -14,7 +14,7 @@ export async function startPersonalDeparture(ctx: Context) {
         [ctx.from.id],
     );
     if (!rows[0]?.parent && !rows[0]?.tutor && !rows[0]?.signup) {
-        return ctx.reply('I could not find a parent or tutor account linked to this Telegram account.');
+        return ctx.reply('I could not find a parent account, tutor profile, or unfinished business signup linked to this Telegram account.');
     }
 
     return ctx.reply(
