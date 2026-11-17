@@ -4,7 +4,7 @@ import { Bot } from 'grammy';
 import { pool } from './db.js';
 import { recordAuditEvent, withTransaction } from './audit.js';
 
-type Org = { id: string; name: string; status: string };
+type Org = { id: string; name: string; status: string; auditRef: string };
 
 async function log(orgId: string, event: 'LEFT' | 'BLOCKED' | 'RETURNED') {
     await withTransaction(async (client) => {
@@ -32,18 +32,24 @@ export async function logLeft(orgId: string) {
 // Returns the agency if it is active after the check, otherwise null.
 export async function reactivateIfReturning(telegramUserId: number): Promise<Org | null> {
     const { rows } = await pool.query<Org>(
-        `SELECT id, name, status FROM "Organization" WHERE "telegramUserId" = $1`,
+        `SELECT id, name, status, "auditRef" FROM "Organization" WHERE "telegramUserId" = $1`,
         [telegramUserId]
     );
     const org = rows[0];
     if (!org) return null;
     if (org.status === 'PENDING_APPROVAL' || org.status === 'REJECTED') return null;
 
-    const { rows: last } = await pool.query<{ type: string }>(
-        `SELECT type FROM "OrganizationEvent" WHERE "organizationId" = $1 ORDER BY "createdAt" DESC LIMIT 1`,
-        [org.id]
+    const { rows: lastAudit } = await pool.query<{ action: string }>(
+        `SELECT action FROM "AuditEvent" WHERE "actorRef" = $1 ORDER BY "createdAt" DESC LIMIT 1`,
+        [org.auditRef],
     );
-    const wasAway = org.status === 'LEFT' || last[0]?.type === 'BLOCKED';
+    const { rows: legacyEvents } = await pool.query<{ type: string }>(
+        `SELECT type FROM "OrganizationEvent" WHERE "organizationId" = $1 ORDER BY "createdAt" DESC LIMIT 1`,
+        [org.id],
+    );
+    const wasAway = org.status === 'LEFT' ||
+        lastAudit[0]?.action === 'BOT_BLOCKED' ||
+        legacyEvents[0]?.type === 'BLOCKED';
     if (!wasAway) return org;
 
     await pool.query(`UPDATE "Organization" SET status = 'ACTIVE' WHERE id = $1`, [org.id]);
