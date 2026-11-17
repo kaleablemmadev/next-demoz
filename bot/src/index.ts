@@ -28,6 +28,8 @@ import { registerGenderSettingsHandlers } from './gender-settings.js';
 import { registerRepostHandlers, startRepostScheduler } from './reposts.js';
 import { registerWelcomeHandlers } from './welcome.js';
 import { startRenewalReminders } from './renewals.js';
+import { sendOfferReports } from './offer-report.js';
+import { startAdminSummary, registerSummaryCommand } from './admin-summary.js';
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const publicUrl = process.env.PUBLIC_URL;             // e.g. https://nextdemoz-bot.onrender.com
@@ -63,6 +65,7 @@ registerOfferHandlers(bot);
 registerSubscriptionHandlers(bot);
 registerPaymentHandlers(bot);
 registerAgencyHandlers(bot);
+registerSummaryCommand(bot);
 registerParentHandlers(bot);
 registerAgencyLifecycle(bot);
 registerSettingsHandlers(bot);
@@ -84,6 +87,7 @@ setInterval(async () => {
     checking = true;
     try {
         await sendPendingAlerts(bot);
+        await sendOfferReports(bot);
     } catch (err) {
         console.error('Alert check failed:', err);
     } finally {
@@ -93,6 +97,7 @@ setInterval(async () => {
 
 startDigestScheduler(bot);
 startRepostScheduler(bot);
+startAdminSummary(bot);
 startParentRouter(bot);
 startRenewalReminders(bot);
 

@@ -322,7 +322,10 @@ export function registerAgencyHandlers(bot: Bot) {
         }
 
         await ctx.answerCallbackQuery();
-        await ctx.reply('Offer posted. Matching tutors will be alerted within about 30 seconds.');
+        await ctx.reply(
+            'Offer saved. Within a few minutes you will get a report here: where it was posted, ' +
+            'and how many tutors have received it so far.'
+        );
     });
 
     bot.callbackQuery('ag:post:no', async (ctx) => {
