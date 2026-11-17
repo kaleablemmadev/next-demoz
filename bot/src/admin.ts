@@ -326,22 +326,24 @@ export function registerAdminHandlers(bot: Bot) {
         /^adm:delete:(.+)$/,
         adminCallback(async (ctx) => {
             const id = (ctx.match as RegExpMatchArray)[1];
+            const outcome = await withTransaction(async (client) => {
+                const { rows } = await client.query<{ name: string; auditRef: string }>(
+                    `SELECT name, "auditRef" FROM "Organization" WHERE id = $1 FOR UPDATE`,
+                    [id],
+                );
+                if (!rows[0]) return { deleted: false, missing: true, name: null };
 
-            const { rows } = await pool.query(
-                `SELECT name, "auditRef" FROM "Organization" WHERE id = $1`,
-                [id],
-            );
-            if (rows.length === 0) {
-                await ctx.answerCallbackQuery();
-                return ctx.editMessageText('That business no longer exists.');
-            }
+                const { rows: checks } = await client.query(
+                    `SELECT
+                        EXISTS (SELECT 1 FROM "TutoringOffer" WHERE "organizationId" = $1) AS has_offers,
+                        EXISTS (SELECT 1 FROM "Assignment" WHERE "organizationId" = $1) AS has_assignments,
+                        EXISTS (SELECT 1 FROM "Subscription" WHERE "organizationId" = $1) AS has_subscriptions`,
+                    [id],
+                );
+                if (checks[0]?.has_offers || checks[0]?.has_assignments || checks[0]?.has_subscriptions) {
+                    return { deleted: false, missing: false, name: rows[0].name };
+                }
 
-            if ((await offerCount(id)) > 0 || await hasAgencyHistory(id)) {
-                await ctx.answerCallbackQuery({ text: 'Offers or history now exist.', show_alert: true });
-                return ctx.editMessageText('Not deleted: offers or placement/subscription history now exist. Use the leave workflow.');
-            }
-
-            await withTransaction(async (client) => {
                 await recordAuditEvent(client, {
                     actorRef: rows[0].auditRef,
                     actorType: 'AGENCY',
@@ -350,10 +352,22 @@ export function registerAdminHandlers(bot: Bot) {
                     entityRef: id,
                 });
                 await client.query(`DELETE FROM "Organization" WHERE id = $1`, [id]);
+                return { deleted: true, missing: false, name: rows[0].name };
             });
+
+            if (outcome.missing) {
+                await ctx.answerCallbackQuery();
+                return ctx.editMessageText('That business no longer exists.');
+            }
+            if (!outcome.deleted) {
+                await ctx.answerCallbackQuery({ text: 'Offers or history now exist.', show_alert: true });
+                return ctx.editMessageText('Not deleted: offers or placement/subscription history now exist. Use the leave workflow.');
+            }
+
             await ctx.answerCallbackQuery({ text: 'Deleted.' });
-            return ctx.editMessageText(`Deleted ${rows[0].name}. An audit event was retained.`);
+            return ctx.editMessageText(`Deleted ${outcome.name}. An audit event was retained.`);
         })
+    );
     );
 
     bot.callbackQuery(
