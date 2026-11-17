@@ -8,10 +8,11 @@ export async function startPersonalDeparture(ctx: Context) {
     const { rows } = await pool.query(
         `SELECT
             EXISTS (SELECT 1 FROM "Parent" WHERE "telegramId" = $1) AS parent,
-            EXISTS (SELECT 1 FROM "TelegramSubscriber" WHERE "telegramId" = $1) AS tutor`,
+            EXISTS (SELECT 1 FROM "TelegramSubscriber" WHERE "telegramId" = $1) AS tutor,
+            EXISTS (SELECT 1 FROM "BusinessSignup" WHERE "telegramId" = $1) AS signup`,
         [ctx.from.id],
     );
-    if (!rows[0]?.parent && !rows[0]?.tutor) {
+    if (!rows[0]?.parent && !rows[0]?.tutor && !rows[0]?.signup) {
         return ctx.reply('I could not find a parent or tutor account linked to this Telegram account.');
     }
 
@@ -50,7 +51,7 @@ export function registerPersonalDepartureCallbacks(bot: Bot, onDepartureComplete
             if (parent) {
                 await client.query('DELETE FROM "Feedback" WHERE "fromTelegramId" = $1 AND role <> \'AGENCY\'', [telegramId]);
                 const { rows: assigned } = await client.query<{ id: string }>(
-                    `SELECT pr.id
+                    `SELECT DISTINCT pr.id
                      FROM "ParentRequest" pr
                      JOIN "Assignment" a ON a."requestId" = pr.id
                      WHERE pr."parentId" = $1`,
@@ -117,19 +118,27 @@ export function registerPersonalDepartureCallbacks(bot: Bot, onDepartureComplete
                     `DELETE FROM "Feedback" WHERE "fromTelegramId" = $1 AND role = 'TUTOR'`,
                     [telegramId],
                 );
-                await client.query(`DELETE FROM "BusinessSignup" WHERE "telegramId" = $1`, [telegramId]);
-                await client.query(`DELETE FROM "SignupChat" WHERE "telegramId" = $1`, [telegramId]);
                 // NotificationPreference and OfferDelivery are configured to cascade.
                 await client.query(`DELETE FROM "TelegramSubscriber" WHERE id = $1`, [tutor.id]);
             }
 
-            if (!parent && !tutor) return { found: false, parentRemoved: false, retainedRequests: 0, tutorRemoved: false };
+            const { rowCount: deletedSignupRows } = await client.query(
+                `DELETE FROM "BusinessSignup" WHERE "telegramId" = $1`,
+                [telegramId],
+            );
+            await client.query(`DELETE FROM "SignupChat" WHERE "telegramId" = $1`, [telegramId]);
+            const signupRemoved = (deletedSignupRows ?? 0) > 0;
+
+            if (!parent && !tutor && !signupRemoved) {
+                return { found: false, parentRemoved: false, retainedRequests: 0, tutorRemoved: false, signupRemoved: false };
+            }
             return {
                 found: true,
                 parentRemoved,
                 retainedRequests,
                 tutorRemoved: Boolean(tutor),
-            };
+                signupRemoved,
+            };;
         });
 
         clearParentDraft(telegramId);
@@ -143,6 +152,7 @@ export function registerPersonalDepartureCallbacks(bot: Bot, onDepartureComplete
                 ? `${result.retainedRequests} request(s) connected to an existing placement were retained with personal details removed.`
                 : null,
             result.tutorRemoved ? 'Your tutor profile, preferences, and delivery history were deleted.' : null,
+            result.signupRemoved ? 'Your unfinished business signup data was deleted.' : null,
         ].filter(Boolean);
 
         return ctx.editMessageText(
