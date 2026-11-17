@@ -318,7 +318,7 @@ export function registerLeaveHandlers(bot: Bot) {
                         `UPDATE "Organization"
                          SET status = 'LEFT',
                              name = 'Former NextTutor business',
-                             "telegramUsername" = 'former_' || replace("auditRef"::text, '-', ''),
+                             "telegramUsername" = 'former_' || substr(replace("auditRef"::text, '-', ''), 1, 16),
                              "telegramUserId" = NULL,
                              "ownerUsername" = NULL,
                              "paymentReference" = NULL,
