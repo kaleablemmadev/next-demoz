@@ -2,10 +2,11 @@
 
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
-import { isAdmin, showAdminMenu, ADMIN_COMMANDS, ADMIN_HELP } from './admin.js';
+import { isAdmin, showAdminMenu } from './admin.js';
 import { startBusinessSignup } from './signup.js';
 import { reactivateIfReturning } from './agency-lifecycle.js';
 import { ensureParent } from './parent.js';
+import { WELCOME_MESSAGE } from './welcome.js';
 
 // Telegram command menus are scoped to the current private chat.
 export const TUTOR_COMMANDS = [
@@ -156,18 +157,16 @@ export function registerRoleHandlers(
     bot.api.setMyCommands(TUTOR_COMMANDS).catch((err) => console.error('setMyCommands failed:', err));
 
     bot.command('start', async (ctx) => {
-        if (isAdmin(ctx)) return showAdminMenu(ctx);
-
-        await reactivateIfReturning(ctx.from!.id);
+        if (!isAdmin(ctx)) await reactivateIfReturning(ctx.from!.id);
         const role = await resolveRole(ctx);
-
+        await ctx.reply(WELCOME_MESSAGE);
+        if (role === 'admin') return showAdminMenu(ctx);
         if (role === 'agency') return showAgencyMenu(ctx);
         if (role === 'parent') return showParentMenu(ctx);
         if (role === 'tutor') {
             await setChatCommands(ctx, TUTOR_COMMANDS);
             return ctx.reply('Welcome back to NextTutor. Send /menu to see your options.');
         }
-
         await setChatCommands(ctx, TUTOR_COMMANDS);
         return showRolePicker(ctx, ctx.match?.toString().trim() || 'direct');
     });
