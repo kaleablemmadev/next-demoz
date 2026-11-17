@@ -1,3 +1,5 @@
+BEGIN;
+
 -- NextTutor account audit trail and privacy-preserving account references.
 -- Apply once to the same PostgreSQL database used by the Telegram bot.
 
@@ -45,3 +47,5 @@ FOR EACH ROW EXECUTE FUNCTION prevent_audit_event_mutation();
 CREATE UNIQUE INDEX IF NOT EXISTS "Organization_auditRef_key" ON "Organization" ("auditRef");
 CREATE UNIQUE INDEX IF NOT EXISTS "Parent_auditRef_key" ON "Parent" ("auditRef");
 CREATE UNIQUE INDEX IF NOT EXISTS "TelegramSubscriber_auditRef_key" ON "TelegramSubscriber" ("auditRef");
+
+COMMIT;
