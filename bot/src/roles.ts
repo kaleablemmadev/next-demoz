@@ -68,7 +68,9 @@ export async function showRolePicker(ctx: Context, source = 'direct') {
         reply_markup: new InlineKeyboard()
             .text('I am a tutor', `role:tutor:${source}`)
             .row()
-            .text('I am a tutoring business', 'role:business'),
+            .text('I am a tutoring business', 'role:business')
+            .row()
+            .text('I am a parent', 'role:parent'),
     });
 }
 
@@ -105,5 +107,13 @@ export function registerRoleHandlers(
 
         await ctx.editMessageText('Registering your tutoring business.');
         return startBusinessSignup(ctx);
+    });
+
+    bot.callbackQuery('role:parent', async (ctx) => {
+        await ctx.answerCallbackQuery();
+        await ctx.editMessageText(
+            'You are looking for a tutor.\n\nSend /post to start your request. ' +
+            'Your contact is shared only with the agency that pays for your request.'
+        );
     });
 }

@@ -10,18 +10,24 @@ import { registerSalaryHandlers } from './salary.js';
 import { registerOfferHandlers } from './offers.js';
 import { sendPendingAlerts } from './publish.js';
 import { startDigestScheduler } from './digest.js';
+import { registerPlacementHandlers } from './placement.js';
 import { registerAgencyHandlers } from './agency.js';
+import { startParentRouter, registerRoutingHandlers } from './routing.js';
 import { registerSettingsHandlers } from './settings.js';
 import { registerGenderHandlers } from './gender.js';
+import { registerPaymentHandlers } from './payments.js';
 import { registerMenuHandlers } from './menu.js';
+import { registerParentHandlers } from './parent.js';
 import { registerAdminHandlers } from './admin.js';
 import { registerSignupHandlers } from './signup.js';
 import { registerRoleHandlers } from './roles.js';
 import { registerLeaveHandlers } from './leave.js';
+import { registerSubscriptionHandlers } from './subscriptions.js';
 import { registerSearchHandlers } from './search.js';
 import { registerGenderSettingsHandlers } from './gender-settings.js';
 import { registerRepostHandlers, startRepostScheduler } from './reposts.js';
 import { registerWelcomeHandlers } from './welcome.js';
+import { startRenewalReminders } from './renewals.js';
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const publicUrl = process.env.PUBLIC_URL;             // e.g. https://nextdemoz-bot.onrender.com
@@ -52,15 +58,20 @@ registerAdminHandlers(bot);
 registerSignupHandlers(bot);
 registerSubjectHandlers(bot);
 registerGradeHandlers(bot);
+registerPlacementHandlers(bot);
 registerSalaryHandlers(bot);
 registerOfferHandlers(bot);
+registerSubscriptionHandlers(bot);
+registerPaymentHandlers(bot);
 registerAgencyHandlers(bot);
+registerParentHandlers(bot);
 registerSettingsHandlers(bot);
 registerRepostHandlers(bot);
 registerGenderHandlers(bot);
 registerSearchHandlers(bot);
 registerRoleHandlers(bot, startTutorOnboarding);
 registerMenuHandlers(bot);
+registerRoutingHandlers(bot);
 registerLeaveHandlers(bot);
 registerGenderSettingsHandlers(bot);
 
@@ -82,6 +93,8 @@ setInterval(async () => {
 
 startDigestScheduler(bot);
 startRepostScheduler(bot);
+startParentRouter(bot);
+startRenewalReminders(bot);
 
 // Telegram sends each message here. Only requests with the right path and token are handled.
 const handleUpdate = webhookCallback(bot, 'http', { secretToken: tokenSecret });
