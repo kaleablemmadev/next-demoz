@@ -41,3 +41,7 @@ DROP TRIGGER IF EXISTS "AuditEvent_immutable" ON "AuditEvent";
 CREATE TRIGGER "AuditEvent_immutable"
 BEFORE UPDATE OR DELETE ON "AuditEvent"
 FOR EACH ROW EXECUTE FUNCTION prevent_audit_event_mutation();
+
+CREATE UNIQUE INDEX IF NOT EXISTS "Organization_auditRef_key" ON "Organization" ("auditRef");
+CREATE UNIQUE INDEX IF NOT EXISTS "Parent_auditRef_key" ON "Parent" ("auditRef");
+CREATE UNIQUE INDEX IF NOT EXISTS "TelegramSubscriber_auditRef_key" ON "TelegramSubscriber" ("auditRef");
