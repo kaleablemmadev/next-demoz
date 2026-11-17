@@ -2,6 +2,7 @@ import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
 import { recordAuditEvent, withTransaction } from './audit.js';
 import { clearParentDraft } from './parent.js';
+import { clearTutorSession } from './grades.js';
 
 export async function startPersonalDeparture(ctx: Context) {
     if (!ctx.from) return;
@@ -140,6 +141,7 @@ export function registerPersonalDepartureCallbacks(bot: Bot, onDepartureComplete
         });
 
         clearParentDraft(telegramId);
+        clearTutorSession(telegramId);
         onDepartureComplete?.(telegramId);
         await ctx.answerCallbackQuery({ text: result.found ? 'Account data processed.' : 'Account not found.' });
         if (!result.found) return ctx.editMessageText('No active parent or tutor account was found. Nothing was changed.');
