@@ -2,11 +2,12 @@
 
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
-import { isAdmin, showAdminMenu } from './admin.js';
+import { isAdmin, showAdminMenu, ADMIN_COMMANDS, ADMIN_HELP } from './admin.js';
 import { startBusinessSignup } from './signup.js';
 import { reactivateIfReturning } from './agency-lifecycle.js';
+import { ensureParent } from './parent.js';
 
-// Commands tutors see. This is the default list for every chat.
+// Telegram command menus are scoped to the current private chat.
 export const TUTOR_COMMANDS = [
     { command: 'start', description: 'Register or start again' },
     { command: 'menu', description: 'Show the main menu' },
@@ -18,52 +19,99 @@ export const TUTOR_COMMANDS = [
     { command: 'reset', description: 'Erase my data and start again' },
 ];
 
-// Commands agencies see, only in their own chat with the bot.
 export const AGENCY_COMMANDS = [
     { command: 'start', description: 'Open the agency menu' },
     { command: 'new', description: 'Post a new tutoring offer' },
+    { command: 'template', description: 'Edit your offer post template' },
+    { command: 'cancel', description: 'Cancel the current form' },
     { command: 'menu', description: 'Show the agency menu' },
     { command: 'help', description: 'List agency functions' },
     { command: 'feedback', description: 'Send feedback to NextTutor' },
     { command: 'leave', description: 'Request to leave NextTutor' },
 ];
 
-// Commands parents see, only in their own chat with the bot.
 export const PARENT_COMMANDS = [
-    { command: 'start', description: 'Start over' },
+    { command: 'start', description: 'Open the parent menu' },
     { command: 'post', description: 'Request a tutor for your child' },
-    { command: 'help', description: 'Help' },
+    { command: 'menu', description: 'Show the parent menu' },
+    { command: 'help', description: 'Parent help' },
+    { command: 'feedback', description: 'Send feedback to NextTutor' },
 ];
 
 export const AGENCY_HELP =
-    'NextTutor agency functions\n\n' +
-    '/new - Post a new tutoring offer. You choose grades, sub-city, optional location, sessions, pay, optional hours, gender and optional preferred subject proficiency. Then you review and post.\n' +
-    '/menu - Show the agency menu.\n' +
-    '/help - Show this list.\n\n' +
-    'Your offers are sent to matching tutors. If your channel is set up, they are also posted there.';
+    'NextTutor agency functions\\n\\n' +
+    '/new - Create and publish a tutoring offer.\\n' +
+    '/template - Create or replace your reusable offer-post layout. Use supported placeholders such as {SUBJECT}, {GRADES}, and {MONTHLY_SALARY}.\\n' +
+    '/cancel - Cancel the current form or template edit.\\n' +
+    '/menu - Show the agency menu.\\n' +
+    '/feedback - Send feedback to NextTutor.\\n' +
+    '/leave - Request to leave NextTutor.\\n' +
+    '/help - Show this list.';
+
+export const PARENT_HELP =
+    'NextTutor parent functions\\n\\n' +
+    '/post - Request a tutor for your child. You will provide the grade, area, schedule, budget and contact details.\\n' +
+    '/menu - Show the parent menu.\\n' +
+    '/feedback - Send feedback to NextTutor.\\n' +
+    '/help - Show this list.';
+
+export type UserRole = 'admin' | 'agency' | 'parent' | 'tutor' | 'guest';
 
 export async function findAgencyByUsername(username: string | undefined) {
     if (!username) return null;
     const { rows } = await pool.query(
-        `SELECT id, name FROM "Organization" WHERE lower("telegramUsername") = lower($1) AND status = 'ACTIVE'`,
+        `SELECT id, name, "telegramUsername", "postTemplate"
+         FROM "Organization"
+         WHERE lower("telegramUsername") = lower($1) AND status = 'ACTIVE'`,
         [username]
     );
     return rows[0] ?? null;
 }
 
-export async function isAgency(ctx: Context): Promise<boolean> {
-    return (await findAgencyByUsername(ctx.from?.username)) !== null;
+// Prefer the immutable Telegram user ID. Username is retained as a migration/fallback path.
+export async function findAgencyForUser(telegramId: number, username?: string) {
+    const { rows } = await pool.query(
+        `SELECT id, name, "telegramUsername", "postTemplate"
+         FROM "Organization"
+         WHERE status = 'ACTIVE'
+           AND ("telegramUserId" = $1 OR ($2::text IS NOT NULL AND lower("telegramUsername") = lower($2)))
+         ORDER BY CASE WHEN "telegramUserId" = $1 THEN 0 ELSE 1 END
+         LIMIT 1`,
+        [telegramId, username ?? null]
+    );
+    return rows[0] ?? null;
 }
 
-async function isRegisteredTutor(telegramId: number): Promise<boolean> {
+export async function isAgency(ctx: Context): Promise<boolean> {
+    return Boolean(ctx.from && await findAgencyForUser(ctx.from.id, ctx.from.username));
+}
+
+async function isParent(telegramId: number): Promise<boolean> {
     const { rows } = await pool.query(
-        `SELECT 1 FROM "TelegramSubscriber" WHERE "telegramId" = $1 AND "subCity" IS NOT NULL`,
+        `SELECT 1 FROM "Parent" WHERE "telegramId" = $1 LIMIT 1`,
         [telegramId]
     );
     return rows.length > 0;
 }
 
-// Sets the command list for this chat only, so each role sees its own menu.
+async function isRegisteredTutor(telegramId: number): Promise<boolean> {
+    const { rows } = await pool.query(
+        `SELECT 1 FROM "TelegramSubscriber" WHERE "telegramId" = $1 AND "subCity" IS NOT NULL LIMIT 1`,
+        [telegramId]
+    );
+    return rows.length > 0;
+}
+
+// One role resolver is shared by /start, /menu and /help to prevent role drift.
+export async function resolveRole(ctx: Context): Promise<UserRole> {
+    if (isAdmin(ctx)) return 'admin';
+    if (!ctx.from) return 'guest';
+    if (await findAgencyForUser(ctx.from.id, ctx.from.username)) return 'agency';
+    if (await isParent(ctx.from.id)) return 'parent';
+    if (await isRegisteredTutor(ctx.from.id)) return 'tutor';
+    return 'guest';
+}
+
 export async function setChatCommands(ctx: Context, commands: { command: string; description: string }[]) {
     if (!ctx.chat) return;
     try {
@@ -73,18 +121,21 @@ export async function setChatCommands(ctx: Context, commands: { command: string;
     }
 }
 
-// Shows the agency menu, saves the agency's Telegram ID so the bot can message them,
-// and makes this chat's command list the agency one.
 export async function showAgencyMenu(ctx: Context) {
     if (ctx.from?.username) {
         await pool.query(
-            `UPDATE "Organization" SET "telegramUserId" = $1 WHERE lower("telegramUsername") = lower($2)`,
+            `UPDATE "Organization" SET "telegramUserId" = $1
+             WHERE lower("telegramUsername") = lower($2) OR "telegramUserId" = $1`,
             [ctx.from.id, ctx.from.username]
         );
     }
-
     await setChatCommands(ctx, AGENCY_COMMANDS);
-    return ctx.reply('Agency menu\n\n/new - post a new tutoring offer\n/help - list agency functions');
+    return ctx.reply('Agency menu\\n\\n/new - create a tutoring offer\\n/template - edit your reusable post template\\n/cancel - cancel the current form\\n/help - list agency functions');
+}
+
+export async function showParentMenu(ctx: Context) {
+    await setChatCommands(ctx, PARENT_COMMANDS);
+    return ctx.reply('Parent menu\\n\\n/post - request a tutor for your child\\n/help - parent help');
 }
 
 export async function showRolePicker(ctx: Context, source = 'direct') {
@@ -102,24 +153,22 @@ export function registerRoleHandlers(
     bot: Bot,
     startTutorOnboarding: (ctx: Context) => Promise<unknown>
 ) {
-    // Default command list, shown to everyone who doesn't have a chat-specific list.
     bot.api.setMyCommands(TUTOR_COMMANDS).catch((err) => console.error('setMyCommands failed:', err));
 
     bot.command('start', async (ctx) => {
         if (isAdmin(ctx)) return showAdminMenu(ctx);
 
-        // An agency that left or blocked the bot becomes active again here.
         await reactivateIfReturning(ctx.from!.id);
+        const role = await resolveRole(ctx);
 
-        const agency = await findAgencyByUsername(ctx.from?.username);
-        if (agency) return showAgencyMenu(ctx);
-
-        // This chat was an agency or parent before, so put back the tutor menu.
-        await setChatCommands(ctx, TUTOR_COMMANDS);
-
-        if (await isRegisteredTutor(ctx.from!.id)) {
+        if (role === 'agency') return showAgencyMenu(ctx);
+        if (role === 'parent') return showParentMenu(ctx);
+        if (role === 'tutor') {
+            await setChatCommands(ctx, TUTOR_COMMANDS);
             return ctx.reply('Welcome back to NextTutor. Send /menu to see your options.');
         }
+
+        await setChatCommands(ctx, TUTOR_COMMANDS);
         return showRolePicker(ctx, ctx.match?.toString().trim() || 'direct');
     });
 
@@ -132,24 +181,20 @@ export function registerRoleHandlers(
 
     bot.callbackQuery('role:business', async (ctx) => {
         await ctx.answerCallbackQuery();
-
         await reactivateIfReturning(ctx.from.id);
-        const agency = await findAgencyByUsername(ctx.from.username);
+        const agency = await findAgencyForUser(ctx.from.id, ctx.from.username);
         if (agency) {
             await ctx.editMessageText(`Welcome, ${agency.name}.`);
             return showAgencyMenu(ctx);
         }
-
         await ctx.editMessageText('Registering your tutoring business.');
         return startBusinessSignup(ctx);
     });
 
     bot.callbackQuery('role:parent', async (ctx) => {
         await ctx.answerCallbackQuery();
-        await setChatCommands(ctx, PARENT_COMMANDS);
-        await ctx.editMessageText(
-            'You are looking for a tutor.\n\nSend /post to start your request. ' +
-            'Your contact is shared only with the agency that pays for your request.'
-        );
+        await ensureParent(ctx);
+        await ctx.editMessageText('You are looking for a tutor.');
+        return showParentMenu(ctx);
     });
 }
