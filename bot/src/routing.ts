@@ -1,6 +1,7 @@
 // src/routing.ts
 
 import { Bot, InlineKeyboard } from 'grammy';
+import type { PoolClient } from 'pg';
 import { pool } from './db.js';
 import { ADMIN_USERNAME } from './admin.js';
 
@@ -31,8 +32,8 @@ type Candidate = {
 };
 
 // The next agency to receive this request, or null if none is eligible.
-async function nextAgency(requestId: string): Promise<Candidate | null> {
-    const { rows } = await pool.query<Candidate>(
+async function nextAgency(requestId: string, client: PoolClient): Promise<Candidate | null> {
+    const { rows } = await client.query<Candidate>(
         `SELECT o.id, o.name, o."telegramUserId"::text AS "telegramUserId",
                 s.id AS "subscriptionId", s.plan, s."premiumUsed"
          FROM "Organization" o
@@ -89,50 +90,40 @@ async function clearMessage(bot: Bot, chatId: string | null, messageId: number |
 
 // Sends one request to the next eligible agency. Returns false if no agency is eligible.
 export async function routeRequest(bot: Bot, requestId: string): Promise<boolean> {
-    const { rows } = await pool.query<OpenRequest>(
-                `SELECT id, "weakSubjects", "gradeLevel", "subCity", "locationDetail", "sessionsPerWeek",
-                "budgetEtb", "preferredTutorGender", notes
-         FROM "ParentRequest" WHERE id = $1 AND status IN ('OPEN', 'ASSIGNED')`,
-        [requestId]
-    );
-    const request = rows[0];
-    if (!request) return false;
-
-    const agency = await nextAgency(requestId);
-    if (!agency) return false;
-
-    const { rows: inserted } = await pool.query<{ id: string }>(
-        `INSERT INTO "Assignment" ("requestId", "organizationId") VALUES ($1, $2) RETURNING id`,
-        [requestId, agency.id]
-    );
-    const assignmentId = inserted[0].id;
-
-    if (agency.plan === 'PREMIUM' && agency.premiumUsed < PREMIUM_LIMIT) {
-        await pool.query(
-            `UPDATE "Subscription" SET "premiumUsed" = "premiumUsed" + 1 WHERE id = $1`,
-            [agency.subscriptionId]
-        );
-    }
-    await pool.query(
-        `UPDATE "ParentRequest" SET status = 'ASSIGNED' WHERE id = $1 AND status = 'OPEN'`,
-        [requestId]
-    );
-
-    const keyboard = new InlineKeyboard()
-        .text('Accept request', `rt:acc:${assignmentId}`)
-        .text('Decline', `rt:dec:${assignmentId}`);
+    const client = await pool.connect();
+    let assignmentId: string | null = null;
+    let agency: Candidate | null = null;
+    let request: OpenRequest | null = null;
     try {
-        const sent = await bot.api.sendMessage(Number(agency.telegramUserId), requestText(request), {
-            reply_markup: keyboard,
-        });
-        await pool.query(
-            `UPDATE "Assignment" SET "agencyChatId" = $1, "agencyMessageId" = $2 WHERE id = $3`,
-            [agency.telegramUserId, sent.message_id, assignmentId]
+        await client.query('BEGIN');
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [requestId]);
+        const requestResult = await client.query<OpenRequest>(
+            `SELECT id, "weakSubjects", "gradeLevel", "subCity", "locationDetail", "sessionsPerWeek", "budgetEtb", "preferredTutorGender", notes FROM "ParentRequest" WHERE id = $1 AND status IN ('OPEN', 'ASSIGNED')`,
+            [requestId]
         );
+        request = requestResult.rows[0] ?? null;
+        if (!request) { await client.query('COMMIT'); return false; }
+        const active = await client.query(`SELECT 1 FROM "Assignment" WHERE "requestId" = $1 AND status IN ('SENT', 'ACCEPTED', 'PAID', 'PLACED') LIMIT 1`, [requestId]);
+        if (active.rows.length) { await client.query('COMMIT'); return false; }
+        agency = await nextAgency(requestId, client);
+        if (!agency) { await client.query('COMMIT'); return false; }
+        const inserted = await client.query<{ id: string }>(`INSERT INTO "Assignment" ("requestId", "organizationId") VALUES ($1, $2) RETURNING id`, [requestId, agency.id]);
+        assignmentId = inserted.rows[0].id;
+        if (agency.plan === 'PREMIUM' && agency.premiumUsed < PREMIUM_LIMIT) {
+            await client.query(`UPDATE "Subscription" SET "premiumUsed" = "premiumUsed" + 1 WHERE id = $1`, [agency.subscriptionId]);
+        }
+        await client.query(`UPDATE "ParentRequest" SET status = 'ASSIGNED' WHERE id = $1 AND status = 'OPEN'`, [requestId]);
+        await client.query('COMMIT');
     } catch (err) {
-        // The assignment is still recorded and expires after ACCEPT_HOURS.
-        console.error(`Could not send request ${requestId} to ${agency.name}:`, err);
-    }
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw err;
+    } finally { client.release(); }
+    if (!assignmentId || !agency || !request) return false;
+    const keyboard = new InlineKeyboard().text('Accept request', `rt:acc:${assignmentId}`).text('Decline', `rt:dec:${assignmentId}`);
+    try {
+        const sent = await bot.api.sendMessage(Number(agency.telegramUserId), requestText(request), { reply_markup: keyboard });
+        await pool.query(`UPDATE "Assignment" SET "agencyChatId" = $1, "agencyMessageId" = $2 WHERE id = $3 AND status = 'SENT'`, [agency.telegramUserId, sent.message_id, assignmentId]);
+    } catch (err) { console.error(`Could not send request ${requestId} to ${agency.name}:`, err); }
     return true;
 }
 
