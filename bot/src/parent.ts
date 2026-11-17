@@ -148,6 +148,8 @@ export function registerParentHandlers(bot: Bot) {
         }
 
         const [, field, value] = ctx.match as RegExpMatchArray;
+        const expectedStep = field === 'g' ? 'grade' : field === 'a' ? 'area' : field === 'n' ? 'sessions' : 'gender';
+        if (d.step !== expectedStep) { await ctx.answerCallbackQuery({ text: 'This step has expired.' }); return; }
         if (field === 'g') {
             d.gradeLevel = value;
             d.step = 'area';
@@ -175,6 +177,8 @@ export function registerParentHandlers(bot: Bot) {
         }
 
         const [, field] = ctx.match as RegExpMatchArray;
+        const expectedStep = field === 'location' ? 'location' : field === 'weak' ? 'weak' : 'notes';
+        if (d.step !== expectedStep) { await ctx.answerCallbackQuery({ text: 'This step has expired.' }); return; }
         if (field === 'location') {
             d.locationDetail = null;
             d.step = 'weak';
@@ -197,6 +201,7 @@ export function registerParentHandlers(bot: Bot) {
             return ctx.reply('Send /post to start a new request.');
         }
 
+        if (d.step !== 'confirm') { await ctx.answerCallbackQuery({ text: 'This confirmation has expired.' }); return; }
         // Remove the draft first, so a second tap cannot send the same request again.
         drafts.delete(ctx.from.id);
 
@@ -237,6 +242,8 @@ export function registerParentHandlers(bot: Bot) {
     });
 
     bot.callbackQuery('pr:post:no', async (ctx) => {
+        const d = drafts.get(ctx.from.id);
+        if (!d || d.step !== 'confirm') { await ctx.answerCallbackQuery({ text: 'This confirmation has expired.' }); return; }
         drafts.delete(ctx.from.id);
         await ctx.answerCallbackQuery();
         await ctx.reply('Cancelled.');
