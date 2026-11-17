@@ -44,7 +44,7 @@ export async function reactivateIfReturning(telegramUserId: number): Promise<Org
     if (!org) return null;
     if (org.status === 'PENDING_APPROVAL' || org.status === 'REJECTED') return null;
 
-    const { rows: last } = await pool.query<{ event: string }>(
+    const { rows: last } = await pool.query<{ type: string }>(
         `SELECT type FROM "OrganizationEvent" WHERE "organizationId" = $1 ORDER BY "createdAt" DESC LIMIT 1`,
         [org.id]
     );
