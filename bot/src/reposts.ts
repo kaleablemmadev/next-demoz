@@ -211,17 +211,32 @@ export function registerRepostHandlers(bot: Bot) {
 export function startRepostScheduler(bot: Bot) {
     let running = false;
 
-    setInterval(async () => {
+    const run = async () => {
         if (running) return;
         running = true;
+        const client = await pool.connect();
+        let locked = false;
         try {
+            const result = await client.query<{ locked: boolean }>(
+                'SELECT pg_try_advisory_lock(hashtext($1)) AS locked',
+                ['nexttutor:repost-scheduler']
+            );
+            locked = result.rows[0]?.locked === true;
+            if (!locked) return;
             await postDueOffers(bot);
         } catch (err) {
             console.error('Repost check failed:', err);
         } finally {
+            if (locked) {
+                await client.query('SELECT pg_advisory_unlock(hashtext($1))', ['nexttutor:repost-scheduler']).catch(() => undefined);
+            }
+            client.release();
             running = false;
         }
-    }, CHECK_EVERY_MS);
+    };
+
+    run();
+    setInterval(run, CHECK_EVERY_MS);
 }
 
 // Closes an offer and updates its group and channel posts. Used by the admin and leave approvals.
