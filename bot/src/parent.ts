@@ -31,7 +31,7 @@ const SESSIONS = [2, 3, 4, 5] as const;
 const GENDERS = ['ANY', 'MALE', 'FEMALE'] as const;
 
 // Creates or updates the Parent row for this Telegram user and returns its id.
-async function ensureParent(ctx: Context): Promise<{ id: string; contactHandle: string | null }> {
+export async function ensureParent(ctx: Context): Promise<{ id: string; contactHandle: string | null }> {
     const username = ctx.from?.username ?? null;
     const telegramId = ctx.from!.id;
     const contact = username ? `@${username}` : null;
