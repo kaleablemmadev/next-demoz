@@ -19,7 +19,7 @@ type Subscriber = {
 };
 
 // Active subscribers who haven't paused alerts or switched off offer alerts.
-async function alertableSubscribers(): Promise<Subscriber[]> {
+async function alertableSubscribers(offerId: string): Promise<Subscriber[]> {
     const { rows } = await pool.query(`
         SELECT s."telegramId"::text AS "telegramId", s."subCity", s.grades, s."minSalaryEtb", s.gender
         FROM "TelegramSubscriber" s
@@ -33,8 +33,12 @@ async function alertableSubscribers(): Promise<Subscriber[]> {
             WHERE p."subscriberId" = s.id
               AND p.category = 'OFFER_ALERTS'
               AND p.enabled = false
-        )
-    `);
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM "OfferDelivery" d
+            WHERE d."subscriberId" = s.id AND d."offerId" = $1
+          )
+    `, [offerId]);
     return rows;
 }
 
@@ -46,7 +50,7 @@ export async function sendOfferAlerts(bot: Bot, offer: AlertOffer): Promise<numb
     let sent = 0;
     const text = offerCardText(offer);
 
-    for (const sub of await alertableSubscribers()) {
+    for (const sub of await alertableSubscribers(offer.id)) {
         const matches = tutorMatchesOffer(
             { subCity: sub.subCity, grades: sub.grades, minSalaryEtb: sub.minSalaryEtb, gender: sub.gender },
             {
@@ -57,14 +61,6 @@ export async function sendOfferAlerts(bot: Bot, offer: AlertOffer): Promise<numb
             }
         );
         if (!matches) continue;
-
-        const already = await pool.query(
-            `SELECT 1 FROM "OfferDelivery" d
-                               JOIN "TelegramSubscriber" s ON s.id = d."subscriberId"
-             WHERE s."telegramId" = $1 AND d."offerId" = $2`,
-            [sub.telegramId, offer.id]
-        );
-        if (already.rows.length > 0) continue;
 
         try {
             await bot.api.sendMessage(sub.telegramId, text);
