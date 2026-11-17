@@ -255,9 +255,9 @@ export function registerParentHandlers(bot: Bot) {
 
                 const { rows: requests } = await client.query<{ id: string }>(
                     `INSERT INTO "ParentRequest"
-                     (id, "parentId", "createdBy", subject, "gradeLevel", "subCity", "locationDetail",
+                     (id, "parentId", "createdBy", "gradeLevel", "subCity", "locationDetail",
                       "weakSubjects", "sessionsPerWeek", "budgetEtb", "preferredTutorGender", notes, status, "createdAt")
-                     VALUES (gen_random_uuid()::text, $1, 'PARENT', NULL, $2, $3, $4, $5, $6, $7, $8, $9, 'OPEN', now())
+                     VALUES (gen_random_uuid()::text, $1, 'PARENT', $2, $3, $4, $5, $6, $7, $8, $9, 'OPEN', now())
                      RETURNING id`,
                     [
                         d.parentId,
