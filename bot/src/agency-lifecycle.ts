@@ -6,7 +6,7 @@ import { pool } from './db.js';
 type Org = { id: string; name: string; status: string };
 
 async function log(orgId: string, event: 'LEFT' | 'BLOCKED' | 'RETURNED') {
-    await pool.query(`INSERT INTO "OrganizationEvent" ("organizationId", event) VALUES ($1, $2)`, [orgId, event]);
+    await pool.query(`INSERT INTO "OrganizationEvent" ("organizationId", type, source) VALUES ($1, $2, 'BOT')`, [orgId, event]);
 }
 
 // Called when an approved leave request marks the agency as LEFT.
@@ -26,10 +26,10 @@ export async function reactivateIfReturning(telegramUserId: number): Promise<Org
     if (org.status === 'PENDING_APPROVAL' || org.status === 'REJECTED') return null;
 
     const { rows: last } = await pool.query<{ event: string }>(
-        `SELECT event FROM "OrganizationEvent" WHERE "organizationId" = $1 ORDER BY "createdAt" DESC LIMIT 1`,
+        `SELECT type FROM "OrganizationEvent" WHERE "organizationId" = $1 ORDER BY "createdAt" DESC LIMIT 1`,
         [org.id]
     );
-    const wasAway = org.status === 'LEFT' || last[0]?.event === 'BLOCKED';
+    const wasAway = org.status === 'LEFT' || last[0]?.type === 'BLOCKED';
     if (!wasAway) return org;
 
     await pool.query(`UPDATE "Organization" SET status = 'ACTIVE' WHERE id = $1`, [org.id]);
