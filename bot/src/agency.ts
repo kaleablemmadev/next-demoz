@@ -52,14 +52,16 @@ const WEEKS_PER_MONTH = 4.33;
 const drafts = new Map<number, Draft>();
 const templateDrafts = new Map<number, string>();
 
-async function findAgency(username: string | undefined) {
+async function findAgency(telegramId: number, username: string | undefined) {
     if (!username) return null;
     const { rows } = await pool.query(
         `SELECT id, name, "telegramUsername", "postTemplate"
      FROM "Organization"
-     WHERE lower("telegramUsername") = lower($1)
-       AND status = 'ACTIVE'`,
-        [username]
+     WHERE status = 'ACTIVE'
+       AND ("telegramUserId" = $1 OR lower("telegramUsername") = lower($2))
+     ORDER BY CASE WHEN "telegramUserId" = $1 THEN 0 ELSE 1 END
+     LIMIT 1`,
+        [telegramId, username]
     );
     return rows[0] ?? null;
 }
@@ -196,7 +198,7 @@ async function ask(ctx: Context, d: Draft) {
 
 export function registerAgencyHandlers(bot: Bot) {
     bot.command('template', async (ctx) => {
-        const agency = await findAgency(ctx.from?.username);
+        const agency = await findAgency(ctx.from!.id, ctx.from?.username);
 
         if (!agency) {
             return ctx.reply('This account is not registered as an active agency.');
