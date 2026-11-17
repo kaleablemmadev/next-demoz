@@ -3,6 +3,7 @@
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { randomUUID } from 'node:crypto';
 import { pool } from './db.js';
+import { recordAuditEvent, withTransaction } from './audit.js';
 import { KNOWN_SUB_CITIES } from '../../shared/rules/nearby-areas.js';
 import { GRADES } from './curriculum.js';
 
@@ -38,27 +39,48 @@ export async function ensureParent(ctx: Context): Promise<{ id: string; contactH
     const telegramId = ctx.from!.id;
     const contact = username ? `@${username}` : null;
 
-    const { rows: existing } = await pool.query<{ id: string; contactHandle: string | null }>(
-        `SELECT id, "contactHandle" FROM "Parent" WHERE "telegramId" = $1`,
-        [telegramId]
-    );
-    if (existing[0]) {
-        const current = existing[0];
+    return withTransaction(async (client) => {
+        const { rows: inserted } = await client.query<{
+            id: string;
+            contactHandle: string | null;
+            auditRef: string;
+        }>(
+            `INSERT INTO "Parent" (id, "telegramId", "telegramUsername", "contactHandle")
+             VALUES (gen_random_uuid()::text, $1, $2, $3)
+             ON CONFLICT ("telegramId") DO NOTHING
+             RETURNING id, "contactHandle", "auditRef"`,
+            [telegramId, username, contact],
+        );
+
+        if (inserted[0]) {
+            await recordAuditEvent(client, {
+                actorRef: inserted[0].auditRef,
+                actorType: 'PARENT',
+                action: 'ACCOUNT_CREATED',
+                entityType: 'PARENT',
+            });
+            return { id: inserted[0].id, contactHandle: inserted[0].contactHandle };
+        }
+
+        const { rows } = await client.query<{ id: string; contactHandle: string | null }>(
+            `SELECT id, "contactHandle" FROM "Parent" WHERE "telegramId" = $1 FOR UPDATE`,
+            [telegramId],
+        );
+        const current = rows[0];
+        if (!current) throw new Error('Parent account could not be loaded after insert conflict.');
+
         if (contact && current.contactHandle !== contact) {
-            await pool.query(
+            await client.query(
                 `UPDATE "Parent" SET "telegramUsername" = $2, "contactHandle" = $3 WHERE id = $1`,
-                [current.id, username, contact]
+                [current.id, username, contact],
             );
         }
         return { id: current.id, contactHandle: contact ?? current.contactHandle };
-    }
+    });
+}
 
-    const { rows } = await pool.query<{ id: string }>(
-        `INSERT INTO "Parent" (id, "telegramId", "telegramUsername", "contactHandle")
-         VALUES (gen_random_uuid()::text, $1, $2, $3) RETURNING id`,
-        [telegramId, username, contact]
-    );
-    return { id: rows[0].id, contactHandle: contact };
+export function clearParentDraft(telegramId: number): void {
+    drafts.delete(telegramId);
 }
 
 async function ask(ctx: Context, d: Draft) {
