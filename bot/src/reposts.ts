@@ -147,6 +147,15 @@ async function postDueOffers(bot: Bot): Promise<void> {
             }
         }
 
+        async function deleteOldPost(bot: Bot, chatId: string | null, messageId: string | null, offerId: string) {
+            if (!chatId || !messageId) return;
+            try {
+                await bot.api.deleteMessage(Number(chatId), Number(messageId));
+            } catch (err) {
+                console.error(`Could not delete old post for offer ${offerId}:`, err);
+            }
+        }
+
         if (groupMessageId !== null || channelMessageId !== null) {
             await pool.query(
                 `UPDATE "TutoringOffer"

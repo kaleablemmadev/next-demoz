@@ -307,36 +307,44 @@ export function registerAgencyHandlers(bot: Bot) {
             return ctx.reply('Send /new to start a new offer.');
         }
 
+        // Remove the draft before saving, so a second tap cannot post the same offer again.
+        drafts.delete(ctx.from.id);
+
         const subjectsText = listLabel(d.subjects, SUBJECTS, 'All Subjects', 'Any subject');
         const gradesText = listLabel(d.grades, GRADES, 'All Grades', 'Any grade');
         const title = `${subjectsText} tutor (${gradesText})`;
 
-        await pool.query(
-            `INSERT INTO "TutoringOffer"
-             ("organizationId", "title", "subject", "gradeLevel", "subjects", "gradeLevels",
-              "subCity", "locationDetail", "monthlySalaryEtb", "salaryUnit", "salaryAmountEtb",
-              "sessionHours", "sessionsPerWeek", "preferredTutorGender", "requirements", "status")
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'OPEN')`,
-            [
-                d.orgId,
-                title,
-                d.subjects[0] ?? 'Not specified',
-                d.grades[0] ?? 'Not specified',
-                d.subjects,
-                d.grades,
-                d.subCity,
-                d.locationDetail ?? null,
-                monthlyOf(d),
-                d.unit,
-                d.amount,
-                d.sessionHours,
-                d.sessionsPerWeek,
-                d.gender ?? null,
-                d.requirements ?? null,
-            ]
-        );
+        try {
+            await pool.query(
+                `INSERT INTO "TutoringOffer"
+                 ("organizationId", "title", "subject", "gradeLevel", "subjects", "gradeLevels",
+                  "subCity", "locationDetail", "monthlySalaryEtb", "salaryUnit", "salaryAmountEtb",
+                  "sessionHours", "sessionsPerWeek", "preferredTutorGender", "requirements", "status")
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'OPEN')`,
+                [
+                    d.orgId,
+                    title,
+                    d.subjects[0] ?? 'Not specified',
+                    d.grades[0] ?? 'Not specified',
+                    d.subjects,
+                    d.grades,
+                    d.subCity,
+                    d.locationDetail ?? null,
+                    monthlyOf(d),
+                    d.unit,
+                    d.amount,
+                    d.sessionHours,
+                    d.sessionsPerWeek,
+                    d.gender ?? null,
+                    d.requirements ?? null,
+                ]
+            );
+        } catch (err) {
+            // Save failed, so put the draft back and let the agency try again.
+            drafts.set(ctx.from.id, d);
+            throw err;
+        }
 
-        drafts.delete(ctx.from.id);
         await ctx.answerCallbackQuery();
         await ctx.reply('Offer posted. Matching tutors will be alerted within about 30 seconds.');
     });

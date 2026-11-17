@@ -3,6 +3,7 @@
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { randomUUID } from 'node:crypto';
 import { pool } from './db.js';
+import { closeOfferEverywhere } from './reposts.js';
 
 export const ADMIN_USERNAME = 'next_tutor_admin';
 const DESTINATIONS = ['GROUP', 'CHANNEL', 'BOTH'];
@@ -363,12 +364,12 @@ export function registerAdminHandlers(bot: Bot) {
             const [id] = args(ctx);
             if (!id) return ctx.reply('Usage: /closeoffer offer-id');
 
-            const { rows } = await pool.query(
-                `UPDATE "TutoringOffer" SET status = 'CLOSED', "closedAt" = now() WHERE id = $1 RETURNING id`,
-                [id]
-            );
+            const { rows } = await pool.query(`SELECT id FROM "TutoringOffer" WHERE id = $1`, [id]);
             if (rows.length === 0) return ctx.reply('No offer with that ID.');
-            return ctx.reply('Offer closed.');
+
+            // Closes the offer in the database and updates its group and channel posts.
+            await closeOfferEverywhere(ctx.api, id);
+            return ctx.reply('Offer closed. Its group and channel posts were updated.');
         })
     );
 

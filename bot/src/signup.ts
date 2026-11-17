@@ -31,6 +31,7 @@ type ChatRow = {
 };
 
 const KIND_ORDER: Kind[] = ['GROUP', 'CHANNEL'];
+const PAYMENT_ETB: number = 0;
 
 const WELCOME = [
     'Welcome to NextTutor business registration.',
@@ -41,7 +42,7 @@ const WELCOME = [
     '• Your business name',
     `• @${BOT_USERNAME} added to each group or channel as an admin, with permission to post`,
     '',
-    'Payment: Free',
+    `Payment: ${PAYMENT_ETB === 0 ? "Free" : `${PAYMENT_ETB.toLocaleString()} ETB`}`,
     '',
     'Your business can post offers after the admin approves your payment.',
 ].join('\n');
@@ -138,7 +139,7 @@ function ownerTemplate(s: Signup, chats: ChatRow[]): string {
         ...chatLines,
         'Ownership: confirmed through the NextTutor bot',
         '',
-        'Payment: ____ ETB',
+        `Payment: ${PAYMENT_ETB === 0 ? "Free" : `${PAYMENT_ETB.toLocaleString()} ETB`}`,
         '',
         'Please confirm once the payment is received so my account can be approved.',
     ].join('\n');

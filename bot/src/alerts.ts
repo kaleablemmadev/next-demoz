@@ -24,9 +24,11 @@ async function alertableSubscribers(): Promise<Subscriber[]> {
     const { rows } = await pool.query(`
         SELECT s."telegramId"::text AS "telegramId", s."subCity", s.subjects, s.grades, s."minSalaryEtb", s.gender
         FROM "TelegramSubscriber" s
-        WHERE s.status = 'ACTIVE'
-          AND s."subCity" IS NOT NULL
-          AND (s."pausedUntil" IS NULL OR s."pausedUntil" < now())
+        WHERE s."subCity" IS NOT NULL
+          AND (
+            s.status = 'ACTIVE'
+            OR (s.status = 'PAUSED' AND s."pausedUntil" < now())
+          )
           AND NOT EXISTS (
             SELECT 1 FROM "NotificationPreference" p
             WHERE p."subscriberId" = s.id

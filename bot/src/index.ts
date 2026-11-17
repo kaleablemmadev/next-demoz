@@ -14,7 +14,7 @@ import { registerAgencyHandlers } from './agency.js';
 import { registerSettingsHandlers } from './settings.js';
 import { registerGenderHandlers } from './gender.js';
 import { registerMenuHandlers } from './menu.js';
-import {registerAdminHandlers} from "./admin.js";
+import { registerAdminHandlers } from './admin.js';
 import { registerSignupHandlers } from './signup.js';
 import { registerRoleHandlers } from './roles.js';
 import { registerLeaveHandlers } from './leave.js';
