@@ -53,7 +53,6 @@ const drafts = new Map<number, Draft>();
 const templateDrafts = new Map<number, string>();
 
 async function findAgency(telegramId: number, username: string | undefined) {
-    if (!username) return null;
     const { rows } = await pool.query(
         `SELECT id, name, "telegramUsername", "postTemplate"
      FROM "Organization"
