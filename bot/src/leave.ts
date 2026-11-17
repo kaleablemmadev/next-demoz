@@ -159,6 +159,20 @@ async function listFeedback(ctx: Context) {
     return ctx.reply(lines.join('\n\n'));
 }
 
+async function listAuditEvents(ctx: Context) {
+    const { rows } = await pool.query(
+        `SELECT "createdAt", "actorType", action, "entityType", metadata
+         FROM "AuditEvent" ORDER BY "createdAt" DESC LIMIT 20`,
+    );
+    if (rows.length === 0) return ctx.reply('No audit events yet.');
+    const lines = rows.map((row) =>
+        `${new Date(row.createdAt).toISOString().slice(0, 16).replace('T', ' ')} UTC · ${row.actorType} · ${row.action}` +
+        (row.entityType ? ` · ${row.entityType}` : '') +
+        (row.metadata && Object.keys(row.metadata).length ? `\n  ${JSON.stringify(row.metadata)}` : ''),
+    );
+    return ctx.reply(`Latest audit events (newest first):\n\n${lines.join('\n\n')}`);
+}
+
 function adminOnly(handler: (ctx: Context) => Promise<unknown>) {
     return async (ctx: Context) => {
         if (!isAdmin(ctx)) return ctx.reply('This command is for admins only.');
@@ -179,6 +193,7 @@ export function registerLeaveHandlers(bot: Bot) {
     bot.command('feedback', startFeedback);
     bot.command('leaverequests', adminOnly(listLeaveRequests));
     bot.command('feedbacks', adminOnly(listFeedback));
+    bot.command('auditlogs', adminOnly(listAuditEvents));
 
     // Agency leave reason
     bot.callbackQuery(/^leave:reason:(.+)$/, async (ctx) => {
