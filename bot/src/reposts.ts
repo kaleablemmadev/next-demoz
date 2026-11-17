@@ -241,6 +241,26 @@ export function startRepostScheduler(bot: Bot) {
     setInterval(run, CHECK_EVERY_MS);
 }
 
+// Removes the bot's stored public posts when an agency account is permanently deleted.
+// Telegram only permits this when the bot still has deletion rights in the destination chat.
+export async function removeOfferEverywhere(api: Api, offerId: string): Promise<void> {
+    const offer = await loadOffer(offerId);
+    if (!offer) return;
+
+    const places = [
+        { chat: offer.groupChatId, message: offer.groupMessageId },
+        { chat: offer.channelChatId, message: offer.channelMessageId },
+    ];
+    for (const place of places) {
+        if (!place.chat || !place.message) continue;
+        try {
+            await api.deleteMessage(Number(place.chat), Number(place.message));
+        } catch (err) {
+            console.error(`Could not remove offer ${offer.id} from chat ${place.chat} during account departure:`, err);
+        }
+    }
+}
+
 // Closes an offer and updates its group and channel posts. Used by the admin and leave approvals.
 export async function closeOfferEverywhere(api: Api, offerId: string): Promise<void> {
     const o = await loadOffer(offerId);
