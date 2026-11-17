@@ -2,11 +2,30 @@
 
 import { Bot } from 'grammy';
 import { pool } from './db.js';
+import { recordAuditEvent, withTransaction } from './audit.js';
 
 type Org = { id: string; name: string; status: string };
 
 async function log(orgId: string, event: 'LEFT' | 'BLOCKED' | 'RETURNED') {
-    await pool.query(`INSERT INTO "OrganizationEvent" ("organizationId", type, source) VALUES ($1, $2, 'BOT')`, [orgId, event]);
+    await withTransaction(async (client) => {
+        const { rows } = await client.query<{ auditRef: string }>(
+            `SELECT "auditRef" FROM "Organization" WHERE id = $1 FOR UPDATE`,
+            [orgId],
+        );
+        if (!rows[0]) return;
+        await client.query(
+            `INSERT INTO "OrganizationEvent" ("organizationId", type, source)
+             VALUES ($1, $2, 'BOT')`,
+            [orgId, event],
+        );
+        await recordAuditEvent(client, {
+            actorRef: rows[0].auditRef,
+            actorType: 'AGENCY',
+            action: event === 'BLOCKED' ? 'BOT_BLOCKED' : event === 'RETURNED' ? 'ACCOUNT_RETURNED' : 'ACCOUNT_LEFT',
+            entityType: 'ORGANIZATION',
+            entityRef: orgId,
+        });
+    });
 }
 
 // Called when an approved leave request marks the agency as LEFT.
