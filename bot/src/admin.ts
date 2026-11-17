@@ -368,7 +368,6 @@ export function registerAdminHandlers(bot: Bot) {
             return ctx.editMessageText(`Deleted ${outcome.name}. An audit event was retained.`);
         })
     );
-    );
 
     bot.callbackQuery(
         'adm:cancel',
