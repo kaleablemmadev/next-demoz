@@ -299,6 +299,7 @@ export function registerLeaveHandlers(bot: Bot) {
                     [req.organizationId],
                 );
                 if (req.telegramUserId) {
+                    await client.query(`DELETE FROM "Feedback" WHERE "fromTelegramId" = $1`, [req.telegramUserId]);
                     await client.query(`DELETE FROM "BusinessSignup" WHERE "telegramId" = $1`, [req.telegramUserId]);
                     await client.query(`DELETE FROM "SignupChat" WHERE "telegramId" = $1`, [req.telegramUserId]);
                 }
