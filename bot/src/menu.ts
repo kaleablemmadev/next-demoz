@@ -3,7 +3,7 @@
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
 import { tutorLeaveKeyboard } from './leave.js';
-import { resolveRole, showAgencyMenu, showParentMenu, AGENCY_HELP, PARENT_HELP, setChatCommands, TUTOR_COMMANDS, AGENCY_COMMANDS, PARENT_COMMANDS } from './roles.js';
+import { resolveRole, showAgencyMenu, showParentMenu, showRolePicker, AGENCY_HELP, PARENT_HELP, setChatCommands, TUTOR_COMMANDS, AGENCY_COMMANDS, PARENT_COMMANDS } from './roles.js';
 import { showAdminMenu, ADMIN_HELP, ADMIN_COMMANDS } from './admin.js';
 
 const MENU_TEXT =
@@ -61,8 +61,8 @@ export function registerMenuHandlers(bot: Bot) {
     });
 
     const askReset = async (ctx: Context) => {
-        if (await isAgency(ctx)) {
-            return ctx.reply('Agency accounts have no tutor data to erase.');
+        if ((await resolveRole(ctx)) !== 'tutor') {
+            return ctx.reply('Only registered tutors can erase tutor alert data from this menu.');
         }
         return ctx.reply(
             'This erases everything the bot knows about you: your grades, area, gender, alert settings and the offers already sent to you. Are you sure?',
