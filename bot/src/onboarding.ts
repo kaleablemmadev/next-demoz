@@ -6,12 +6,21 @@ import { askGrades } from './grades.js';
 export async function startTutorOnboarding(ctx: Context, source = 'direct') {
     const from = ctx.from!;
 
-    await pool.query(
+    const { rows: created } = await pool.query<{ auditRef: string }>(
         `INSERT INTO "TelegramSubscriber" ("telegramId", "firstName", "username", "sourceChannel")
          VALUES ($1, $2, $3, $4)
-         ON CONFLICT ("telegramId") DO NOTHING`,
+         ON CONFLICT ("telegramId") DO NOTHING
+         RETURNING "auditRef"`,
         [from.id, from.first_name ?? null, from.username ?? null, source]
     );
+
+    if (created[0]?.auditRef) {
+        await pool.query(
+            `INSERT INTO "AuditEvent" ("actorRef", "actorType", action, "entityType")
+             VALUES ($1, 'TUTOR', 'ACCOUNT_CREATED', 'TUTOR')`,
+            [created[0].auditRef],
+        );
+    }
 
     const keyboard = new InlineKeyboard();
     KNOWN_SUB_CITIES.forEach((city, i) => {
