@@ -6,7 +6,7 @@ import { findAgencyByUsername, findAgencyForUser } from './roles.js';
 import { startPersonalDeparture, registerPersonalDepartureCallbacks } from './account-departure.js';
 import { recordAuditEvent, withTransaction } from './audit.js';
 import { isAdmin } from './admin.js';
-import { closeOfferEverywhere } from './reposts.js';
+import { closeOfferEverywhere, removeOfferEverywhere } from './reposts.js';
 
 const ADMIN_TELEGRAM_ID = Number(process.env.ADMIN_TELEGRAM_ID ?? 0);
 
@@ -247,12 +247,13 @@ export function registerLeaveHandlers(bot: Bot) {
             }
 
             const { rows: offers } = await pool.query(
-                `SELECT id FROM "TutoringOffer" WHERE "organizationId" = $1 AND status = 'OPEN'`,
+                `SELECT id, status FROM "TutoringOffer" WHERE "organizationId" = $1`,
                 [req.organizationId]
             );
-            // Update public Telegram posts before removing their database records.
+            const openOfferCount = offers.filter((offer: { status: string }) => offer.status === 'OPEN').length;
+            // Remove every stored public post (open or previously closed) before deleting offer rows.
             for (const offer of offers) {
-                await closeOfferEverywhere(ctx.api, offer.id);
+                await removeOfferEverywhere(ctx.api, offer.id);
             }
 
             const departure = await withTransaction(async (client) => {
@@ -276,7 +277,7 @@ export function registerLeaveHandlers(bot: Bot) {
                     action: 'ACCOUNT_LEFT',
                     entityType: 'ORGANIZATION',
                     entityRef: req.organizationId,
-                    metadata: { closedOpenOffers: offers.length, settlementConfirmed: true },
+                    metadata: { closedOpenOffers: openOfferCount, removedOfferPosts: offers.length, settlementConfirmed: true },
                 });
 
                 await client.query(
