@@ -427,8 +427,8 @@ export function registerAgencyHandlers(bot: Bot) {
             await pool.query(
                 `UPDATE "Organization"
          SET "postTemplate" = $2
-         WHERE id = $1 AND "telegramUserId" = $3`,
-                [orgId, text, ctx.from.id]
+         WHERE id = $1 AND ("telegramUserId" = $3 OR lower("telegramUsername") = lower($4))`,
+                [orgId, text, ctx.from.id, ctx.from.username ?? null]
             );
 
             templateDrafts.delete(ctx.from.id);
