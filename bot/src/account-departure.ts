@@ -1,4 +1,4 @@
-import { InlineKeyboard, type Context } from 'grammy';
+import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
 import { recordAuditEvent, withTransaction } from './audit.js';
 import { clearParentDraft } from './parent.js';
@@ -28,9 +28,7 @@ export async function startPersonalDeparture(ctx: Context) {
     );
 }
 
-export async function registerPersonalDepartureCallbacks(bot: {
-    callbackQuery: (trigger: string, handler: (ctx: any) => Promise<unknown>) => unknown;
-}) {
+export function registerPersonalDepartureCallbacks(bot: Bot) {
     bot.callbackQuery('account:leave:cancel', async (ctx) => {
         await ctx.answerCallbackQuery({ text: 'Cancelled.' });
         return ctx.editMessageText('Cancelled. Your account was not changed.');
