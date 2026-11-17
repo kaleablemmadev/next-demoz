@@ -232,6 +232,10 @@ export function registerLeaveHandlers(bot: Bot) {
                 [requestId]
             );
             await pool.query(`UPDATE "Organization" SET status = 'LEFT' WHERE id = $1`, [req.organizationId]);
+            await pool.query(
+                `INSERT INTO "OrganizationEvent" ("organizationId", event) VALUES ($1, 'LEFT')`,
+                [req.organizationId]
+            );
 
             const { rows: offers } = await pool.query(
                 `SELECT id FROM "TutoringOffer" WHERE "organizationId" = $1 AND status = 'OPEN'`,

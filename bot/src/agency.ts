@@ -338,6 +338,12 @@ export function registerAgencyHandlers(bot: Bot) {
 
         const text = ctx.message.text.trim();
 
+        // A command ends the offer in progress.
+        if (text.startsWith('/')) {
+            drafts.delete(ctx.from.id);
+            return next();
+        }
+
         if (d.step === 'location') {
             d.locationDetail = text.slice(0, 200) || null;
             d.step = 'sessions';
