@@ -6,7 +6,7 @@ import { findAgencyByUsername, findAgencyForUser } from './roles.js';
 import { startPersonalDeparture, registerPersonalDepartureCallbacks } from './account-departure.js';
 import { recordAuditEvent, withTransaction } from './audit.js';
 import { isAdmin } from './admin.js';
-import { closeOfferEverywhere, removeOfferEverywhere } from './reposts.js';
+import { removeOfferEverywhere } from './reposts.js';
 
 const ADMIN_TELEGRAM_ID = Number(process.env.ADMIN_TELEGRAM_ID ?? 0);
 
