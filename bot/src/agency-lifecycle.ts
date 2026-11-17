@@ -13,11 +13,6 @@ async function log(orgId: string, event: 'LEFT' | 'BLOCKED' | 'RETURNED') {
             [orgId],
         );
         if (!rows[0]) return;
-        await client.query(
-            `INSERT INTO "OrganizationEvent" ("organizationId", type, source)
-             VALUES ($1, $2, 'BOT')`,
-            [orgId, event],
-        );
         await recordAuditEvent(client, {
             actorRef: rows[0].auditRef,
             actorType: 'AGENCY',
