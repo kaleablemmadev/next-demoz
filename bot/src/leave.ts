@@ -174,6 +174,7 @@ function adminCallback(handler: (ctx: Context) => Promise<unknown>) {
 }
 
 export function registerLeaveHandlers(bot: Bot) {
+    registerPersonalDepartureCallbacks(bot);
     bot.command('leave', startLeave);
     bot.command('feedback', startFeedback);
     bot.command('leaverequests', adminOnly(listLeaveRequests));
