@@ -40,20 +40,20 @@ export const PARENT_COMMANDS = [
 ];
 
 export const AGENCY_HELP =
-    'NextTutor agency functions\\n\\n' +
-    '/new - Create and publish a tutoring offer.\\n' +
-    '/template - Create or replace your reusable offer-post layout. Use supported placeholders such as {SUBJECT}, {GRADES}, and {MONTHLY_SALARY}.\\n' +
-    '/cancel - Cancel the current form or template edit.\\n' +
-    '/menu - Show the agency menu.\\n' +
-    '/feedback - Send feedback to NextTutor.\\n' +
-    '/leave - Request to leave NextTutor.\\n' +
+    'NextTutor agency functions\n\n' +
+    '/new - Create and publish a tutoring offer.\n' +
+    '/template - Create or replace your reusable offer-post layout. Use supported placeholders such as {SUBJECT}, {GRADES}, and {MONTHLY_SALARY}.\n' +
+    '/cancel - Cancel the current form or template edit.\n' +
+    '/menu - Show the agency menu.\n' +
+    '/feedback - Send feedback to NextTutor.\n' +
+    '/leave - Request to leave NextTutor.\n' +
     '/help - Show this list.';
 
 export const PARENT_HELP =
-    'NextTutor parent functions\\n\\n' +
-    '/post - Request a tutor for your child. You will provide the grade, area, schedule, budget and contact details.\\n' +
-    '/menu - Show the parent menu.\\n' +
-    '/feedback - Send feedback to NextTutor.\\n' +
+    'NextTutor parent functions\n\n' +
+    '/post - Request a tutor for your child. You will provide the grade, area, schedule, budget and contact details.\n' +
+    '/menu - Show the parent menu.\n' +
+    '/feedback - Send feedback to NextTutor.\n' +
     '/help - Show this list.';
 
 export type UserRole = 'admin' | 'agency' | 'parent' | 'tutor' | 'guest';
@@ -131,12 +131,12 @@ export async function showAgencyMenu(ctx: Context) {
         );
     }
     await setChatCommands(ctx, AGENCY_COMMANDS);
-    return ctx.reply('Agency menu\\n\\n/new - create a tutoring offer\\n/template - edit your reusable post template\\n/cancel - cancel the current form\\n/help - list agency functions');
+    return ctx.reply('Agency menu\n\n/new - create a tutoring offer\n/template - edit your reusable post template\n/cancel - cancel the current form\n/help - list agency functions');
 }
 
 export async function showParentMenu(ctx: Context) {
     await setChatCommands(ctx, PARENT_COMMANDS);
-    return ctx.reply('Parent menu\\n\\n/post - request a tutor for your child\\n/help - parent help');
+    return ctx.reply('Parent menu\n\n/post - request a tutor for your child\n/help - parent help');
 }
 
 export async function showRolePicker(ctx: Context, source = 'direct') {
