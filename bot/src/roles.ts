@@ -58,6 +58,7 @@ export const PARENT_HELP =
     '/cancel - Cancel the current request form.\n' +
     '/menu - Show the parent menu.\n' +
     '/feedback - Send feedback to NextTutor.\n' +
+    '/leave - Delete your parent account and personal data.\n' +
     '/help - Show this list.';
 
 export type UserRole = 'admin' | 'agency' | 'parent' | 'tutor' | 'guest';
