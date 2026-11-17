@@ -1,6 +1,7 @@
 // src/parent.ts
 
 import { Bot, InlineKeyboard, type Context } from 'grammy';
+import { randomUUID } from 'node:crypto';
 import { pool } from './db.js';
 import { KNOWN_SUB_CITIES } from '../../shared/rules/nearby-areas.js';
 import { GRADES } from './curriculum.js';
@@ -10,6 +11,7 @@ type Step =
     | 'sessions' | 'budget' | 'gender' | 'notes' | 'confirm';
 
 type Draft = {
+    id: string;
     parentId: string;
     contactHandle: string | null;
     step: Step;
@@ -65,47 +67,47 @@ async function ask(ctx: Context, d: Draft) {
             return ctx.reply('Send a phone number or Telegram @username so the agency can reach you.');
         case 'grade':
             return ctx.reply('Which grade is the child in?', {
-                reply_markup: choices('g', GRADES.map((g) => [g, g]), 3),
+                reply_markup: choices('g', GRADES.map((g) => [g, g]), d.id, 3),
             });
         case 'area':
             return ctx.reply('Which sub-city?', {
-                reply_markup: choices('a', KNOWN_SUB_CITIES.map((c) => [c, c]), 3),
+                reply_markup: choices('a', KNOWN_SUB_CITIES.map((c) => [c, c]), d.id, 3),
             });
         case 'location':
             return ctx.reply('Optional: type a location detail, such as a nearby landmark. Or tap Skip.', {
-                reply_markup: new InlineKeyboard().text('Skip', 'pr:skip:location'),
+                reply_markup: new InlineKeyboard().text('Skip', `pr:skip:${d.id}:location`),
             });
         case 'weak':
             return ctx.reply(
                 'Optional: which subjects does the child find difficult? Type them, for example "Math, English". Or tap Skip.',
-                { reply_markup: new InlineKeyboard().text('Skip', 'pr:skip:weak') }
+                { reply_markup: new InlineKeyboard().text('Skip', `pr:skip:${d.id}:weak`) }
             );
         case 'sessions':
             return ctx.reply('How many sessions per week?', {
-                reply_markup: choices('n', SESSIONS.map((n) => [String(n), String(n)]), 4),
+                reply_markup: choices('n', SESSIONS.map((n) => [String(n), String(n)]), d.id, 4),
             });
         case 'budget':
             return ctx.reply('Monthly budget in ETB? Type a number between 500 and 20000, for example 2500.');
         case 'gender':
             return ctx.reply('Preferred tutor gender?', {
-                reply_markup: choices('x', [['Any', 'ANY'], ['Male', 'MALE'], ['Female', 'FEMALE']], 3),
+                reply_markup: choices('x', [['Any', 'ANY'], ['Male', 'MALE'], ['Female', 'FEMALE']], d.id, 3),
             });
         case 'notes':
             return ctx.reply('Optional: anything else the agency should know? Type it, or tap Skip.', {
-                reply_markup: new InlineKeyboard().text('Skip', 'pr:skip:notes'),
+                reply_markup: new InlineKeyboard().text('Skip', `pr:skip:${d.id}:notes`),
             });
         case 'confirm':
             return ctx.reply(`Please check your request:\n\n${summary(d).join('\n')}`, {
-                reply_markup: new InlineKeyboard().text('Send request', 'pr:post:yes').text('Cancel', 'pr:post:no'),
+                reply_markup: new InlineKeyboard().text('Send request', `pr:post:yes:${d.id}`).text('Cancel', `pr:post:no:${d.id}`),
             });
     }
 }
 
 // Buttons send only their index or value, so callback data stays short.
-function choices(prefix: string, options: [string, string][], perRow: number) {
+function choices(prefix: string, options: [string, string][], sessionId: string, perRow: number) {
     const kb = new InlineKeyboard();
     options.forEach(([label, value], i) => {
-        kb.text(label, `pr:${prefix}:${value}`);
+        kb.text(label, `pr:${prefix}:${sessionId}:${value}`);
         if ((i + 1) % perRow === 0) kb.row();
     });
     return kb;
@@ -131,6 +133,7 @@ export function registerParentHandlers(bot: Bot) {
     bot.command('post', async (ctx) => {
         const parent = await ensureParent(ctx);
         const d: Draft = {
+            id: randomUUID(),
             parentId: parent.id,
             contactHandle: parent.contactHandle,
             step: parent.contactHandle ? 'grade' : 'contact',
@@ -139,15 +142,21 @@ export function registerParentHandlers(bot: Bot) {
         await ask(ctx, d);
     });
 
+    bot.command('cancel', async (ctx) => {
+        if (!drafts.delete(ctx.from!.id)) return ctx.reply('There is no active parent request to cancel.');
+        return ctx.reply('Your parent request draft was cancelled. Nothing was submitted.');
+    });
+
     // Single choice buttons: grade, area, sessions, gender.
-    bot.callbackQuery(/^pr:(g|a|n|x):(.+)$/, async (ctx) => {
+    bot.callbackQuery(/^pr:(g|a|n|x):([^:]+):(.+)$/, async (ctx) => {
         const d = drafts.get(ctx.from.id);
         if (!d) {
             await ctx.answerCallbackQuery();
             return ctx.reply('Send /post to start a new request.');
         }
 
-        const [, field, value] = ctx.match as RegExpMatchArray;
+        const [, field, sessionId, value] = ctx.match as RegExpMatchArray;
+        if (sessionId !== d.id) { await ctx.answerCallbackQuery({ text: 'This request form has expired.' }); return; }
         const expectedStep = field === 'g' ? 'grade' : field === 'a' ? 'area' : field === 'n' ? 'sessions' : 'gender';
         if (d.step !== expectedStep) { await ctx.answerCallbackQuery({ text: 'This step has expired.' }); return; }
         if (field === 'g') {
@@ -169,14 +178,15 @@ export function registerParentHandlers(bot: Bot) {
     });
 
     // Skip buttons for the optional steps.
-    bot.callbackQuery(/^pr:skip:(location|weak|notes)$/, async (ctx) => {
+    bot.callbackQuery(/^pr:skip:([^:]+):(location|weak|notes)$/, async (ctx) => {
         const d = drafts.get(ctx.from.id);
         if (!d) {
             await ctx.answerCallbackQuery();
             return ctx.reply('Send /post to start a new request.');
         }
 
-        const [, field] = ctx.match as RegExpMatchArray;
+        const [, sessionId, field] = ctx.match as RegExpMatchArray;
+        if (sessionId !== d.id) { await ctx.answerCallbackQuery({ text: 'This request form has expired.' }); return; }
         const expectedStep = field === 'location' ? 'location' : field === 'weak' ? 'weak' : 'notes';
         if (d.step !== expectedStep) { await ctx.answerCallbackQuery({ text: 'This step has expired.' }); return; }
         if (field === 'location') {
@@ -194,14 +204,15 @@ export function registerParentHandlers(bot: Bot) {
         await ask(ctx, d);
     });
 
-    bot.callbackQuery('pr:post:yes', async (ctx) => {
+    bot.callbackQuery(/^pr:post:yes:([^:]+)$/, async (ctx) => {
         const d = drafts.get(ctx.from.id);
         if (!d) {
             await ctx.answerCallbackQuery();
             return ctx.reply('Send /post to start a new request.');
         }
 
-        if (d.step !== 'confirm') { await ctx.answerCallbackQuery({ text: 'This confirmation has expired.' }); return; }
+        const sessionId = (ctx.match as RegExpMatchArray)[1];
+        if (sessionId !== d.id || d.step !== 'confirm') { await ctx.answerCallbackQuery({ text: 'This confirmation has expired.' }); return; }
         // Remove the draft first, so a second tap cannot send the same request again.
         drafts.delete(ctx.from.id);
 
@@ -241,9 +252,10 @@ export function registerParentHandlers(bot: Bot) {
         }
     });
 
-    bot.callbackQuery('pr:post:no', async (ctx) => {
+    bot.callbackQuery(/^pr:post:no:([^:]+)$/, async (ctx) => {
         const d = drafts.get(ctx.from.id);
-        if (!d || d.step !== 'confirm') { await ctx.answerCallbackQuery({ text: 'This confirmation has expired.' }); return; }
+        const sessionId = (ctx.match as RegExpMatchArray)[1];
+        if (!d || sessionId !== d.id || d.step !== 'confirm') { await ctx.answerCallbackQuery({ text: 'This confirmation has expired.' }); return; }
         drafts.delete(ctx.from.id);
         await ctx.answerCallbackQuery();
         await ctx.reply('Cancelled.');
