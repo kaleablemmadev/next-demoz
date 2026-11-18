@@ -30,5 +30,5 @@ jobs:
       # The full integration suite requires a private, isolated .env.test database.
       # Never replace that safety guard with production credentials in CI.
       - run: npm install --no-audit --no-fund
-      - run: npx vitest run --config vitest.coordinator.config.mts test/update-coordinator.test.ts
+      - run: npx vitest run --config vitest.coordinator.config.mts
       - run: npx tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --skipLibCheck src/index.ts
