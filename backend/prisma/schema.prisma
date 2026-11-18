@@ -470,7 +470,6 @@ model TutoringOffer {
   organization Organization @relation(fields: [organizationId], references: [id])
 
   @@index([organizationId, status], map: "TutoringOffer_organization_status_idx")
-  @@index([subjects(ops: ArrayOps)], type: Gin, map: "TutoringOffer_subjects_gin_idx")
 }
 
 model TelegramSubscriber {
