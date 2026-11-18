@@ -5,7 +5,6 @@ const WEEKS_PER_MONTH = 4.33;
 
 export const DEFAULT_OFFER_TEMPLATE = `📢 NEW TUTORING OPPORTUNITY!
 
-📚 Subject: {SUBJECT}
 🎓 Grades: {GRADES}
 📍 Area: {SUB_CITY}
 📌 Location: {LOCATION}
@@ -24,7 +23,6 @@ export const DEFAULT_OFFER_TEMPLATE = `📢 NEW TUTORING OPPORTUNITY!
 Share this opportunity!`;
 
 export const OFFER_PLACEHOLDERS = {
-    SUBJECT: 'Offer subject',
     GRADES: 'Selected grades',
     SUB_CITY: 'Sub-city',
     LOCATION: 'Specific location',

@@ -454,7 +454,7 @@ export function registerAgencyHandlers(bot: Bot) {
 
             if (!/\{[^{}]+\}/.test(text)) {
                 return ctx.reply(
-                    'Your template must contain at least one supported placeholder, such as {SUBJECT} or {GRADES}.'
+                    'Your template must contain at least one supported placeholder, such as {GRADES} or {MONTHLY_SALARY}.'
                 );
             }
 

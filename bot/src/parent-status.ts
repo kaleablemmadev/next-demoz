@@ -19,7 +19,6 @@ function describe(r: Row): string {
     if (r.lastAssignment === 'PAID') return 'An agency is arranging a tutor for you';
     if (r.lastAssignment === 'ACCEPTED') return 'An agency accepted your request and is arranging payment';
     if (r.lastAssignment === 'SENT') return 'Sent to an agency, waiting for a reply';
-    if (r.lastAssignment === 'NOT_PLACED') return 'No tutor was found yet';
     if (r.status === 'ASSIGNED') return 'Waiting for the next agency';
     return 'Waiting for an agency';
 }
