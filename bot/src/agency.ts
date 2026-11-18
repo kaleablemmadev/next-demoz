@@ -24,7 +24,6 @@ type Draft = {
     orgUsername: string;
     postTemplate: string | null;
     step:
-    | 'subject'
     | 'grades'
     | 'area'
     | 'location'
@@ -35,7 +34,6 @@ type Draft = {
     | 'gender'
     | 'requirements'
     | 'confirm';
-    subject?: string;
     grades: string[];
     subCity?: string;
     locationDetail?: string | null;
@@ -134,7 +132,6 @@ function salaryLine(d: Draft): string {
 function offerLines(d: Draft): string[] {
     const offer: CardOffer = {
         title: `Tutor (${listLabel(d.grades, GRADES, 'All Grades', 'Not specified')})`,
-        subject: d.subject ?? null,
         gradeLevels: d.grades,
         subCity: d.subCity ?? '',
         locationDetail: d.locationDetail ?? null,
@@ -155,10 +152,6 @@ function offerLines(d: Draft): string[] {
 
 async function ask(ctx: Context, d: Draft) {
     switch (d.step) {
-        case 'subject':
-            return ctx.reply(
-                'Which subject is this offer for? For example: Mathematics, Physics, English.'
-            );
         case 'grades':
             return ctx.reply('Which grades? Pick one or more, or tap All.', {
                 reply_markup: multiKeyboard('grd', GRADES, d.grades, d.id),
@@ -193,7 +186,7 @@ async function ask(ctx: Context, d: Draft) {
             });
         case 'requirements':
             return ctx.reply(
-                'Optional: preferred subject proficiency for the tutor, for example "Math strong, English basic". Or tap Skip.',
+                'Optional: any other requirements for the tutor, for example experience or teaching style. Or tap Skip.',
                 { reply_markup: new InlineKeyboard().text('Skip', `ag:skip:${d.id}:requirements`) }
             );
         case 'confirm':
@@ -250,7 +243,7 @@ export function registerAgencyHandlers(bot: Bot) {
             orgName: agency.name,
             orgUsername: agency.telegramUsername,
             postTemplate: agency.postTemplate ?? null,
-            step: 'subject',
+            step: 'grades',
             grades: [],
         };
         drafts.set(ctx.from!.id, draft);
@@ -479,16 +472,6 @@ export function registerAgencyHandlers(bot: Bot) {
         if (text.startsWith('/')) {
             drafts.delete(ctx.from.id);
             return next();
-        }
-
-        if (d.step === 'subject') {
-            if (text.length < 2 || text.length > 120) {
-                return ctx.reply('Please enter a subject between 2 and 120 characters.');
-            }
-
-            d.subject = text;
-            d.step = 'grades';
-            return ask(ctx, d);
         }
 
         if (d.step === 'location') {

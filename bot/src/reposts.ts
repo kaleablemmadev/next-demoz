@@ -21,7 +21,7 @@ type PostOffer = CardOffer & {
 
 // Same select for posting and for closing, so both see the same fields.
 const OFFER_SELECT = `
-    SELECT t.id, t.title, t.subject, t."gradeLevels", t."subCity",
+    SELECT t.id, t.title, t."gradeLevels", t."subCity",
            t."locationDetail", t."sessionsPerWeek", t."sessionHours",
            t."salaryUnit", t."salaryAmountEtb", t."monthlySalaryEtb",
            t."preferredTutorGender", t.requirements, t.status,

@@ -44,7 +44,7 @@ export const OFFER_PLACEHOLDERS = {
 export type CardOffer = {
     id?: string;
     title: string;
-    subject: string | null;
+    subject?: string | null; // legacy: subjects were removed from offers
     gradeLevels: string[];
     subCity: string;
     locationDetail: string | null;

@@ -17,10 +17,10 @@ export function registerPaymentHandlers(bot: Bot) {
             const { rows } = await pool.query<{
                 id: string;
                 agencyName: string;
-                subject: string;
+                gradeLevel: string;
                 subCity: string;
             }>(
-                `SELECT a.id, o.name AS "agencyName", r.subject, r."subCity"
+                `SELECT a.id, o.name AS "agencyName", r."gradeLevel", r."subCity"
                  FROM "Assignment" a
                  JOIN "Organization" o ON o.id = a."organizationId"
                  JOIN "ParentRequest" r ON r.id = a."requestId"
@@ -33,7 +33,7 @@ export function registerPaymentHandlers(bot: Bot) {
                 await ctx.reply('No accepted requests are waiting for payment.');
                 return;
             }
-            const lines = rows.map((r) => `${r.id}\n  ${r.agencyName}, ${r.subject}, ${r.subCity}`);
+            const lines = rows.map((r) => `${r.id}\n  ${r.agencyName}, ${r.gradeLevel}, ${r.subCity}`);
             await ctx.reply(['Waiting for payment:', '', ...lines, '', 'To confirm: /paid <id>'].join('\n'));
             return;
         }
