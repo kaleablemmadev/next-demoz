@@ -29,6 +29,7 @@ import { registerRepostHandlers, startRepostScheduler } from './reposts.js';
 import { startRenewalReminders } from './renewals.js';
 import { sendOfferReports } from './offer-report.js';
 import { startAdminSummary, registerSummaryCommand } from './admin-summary.js';
+import { UserUpdateCoordinator } from './update-coordinator.js';
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const publicUrl = process.env.PUBLIC_URL;             // e.g. https://nextdemoz-bot.onrender.com
@@ -41,31 +42,53 @@ if (!token || !publicUrl || !pathSecret || !tokenSecret) {
 
 const bot = new Bot(token);
 
-// Prevent the same user from executing the same button action concurrently.
-// This is a per-process guard; database constraints and state checks remain the durable protection.
-const inFlightCallbackActions = new Set<string>();
+// A user's updates must not mutate their conversation concurrently. In particular,
+// a second role-selection callback must not start another onboarding flow while the
+// first role-selection callback is still creating the account and sending its prompt.
+// Other users remain fully concurrent. Messages are serialized; overlapping button
+// callbacks are acknowledged and dropped rather than replayed against a stale screen.
+const updateCoordinator = new UserUpdateCoordinator();
 
 bot.use(async (ctx, next) => {
-    const query = ctx.callbackQuery;
-    if (!query) return next();
+    const telegramId = ctx.from?.id;
+    if (telegramId === undefined) return next();
 
-    const target = query.message
-        ? `${query.message.chat.id}:${query.message.message_id}`
-        : query.inline_message_id ?? 'inline';
-    const key = `${query.from.id}:${target}:${query.data ?? ''}`;
+    const startedAt = Date.now();
+    const updateType = ctx.callbackQuery
+        ? 'callback'
+        : ctx.message
+            ? 'message'
+            : ctx.update.my_chat_member
+                ? 'my_chat_member'
+                : 'other';
 
-    if (inFlightCallbackActions.has(key)) {
-        await ctx.answerCallbackQuery({ text: 'This action is already being processed.' }).catch((err) => {
-            console.warn('Could not acknowledge duplicate callback:', err);
-        });
+    const outcome = await updateCoordinator.run(
+        telegramId,
+        Boolean(ctx.callbackQuery),
+        async () => {
+            try {
+                await ctx.answerCallbackQuery({
+                    text: 'Another action is still processing. Please wait.',
+                });
+            } catch (err) {
+                console.warn('Could not acknowledge overlapping callback:', err);
+            }
+        },
+        next,
+    );
+
+    if (outcome.status === 'busy') {
+        console.warn(
+            `Dropped overlapping callback: user=${telegramId} update=${ctx.update.update_id} data=${ctx.callbackQuery?.data ?? 'unknown'}`,
+        );
         return;
     }
 
-    inFlightCallbackActions.add(key);
-    try {
-        await next();
-    } finally {
-        inFlightCallbackActions.delete(key);
+    const durationMs = Date.now() - startedAt;
+    if (durationMs >= 1500) {
+        console.warn(
+            `Slow Telegram update: type=${updateType} user=${telegramId} update=${ctx.update.update_id} durationMs=${durationMs}`,
+        );
     }
 });
 
@@ -103,7 +126,30 @@ registerRoutingHandlers(bot);
 registerLeaveHandlers(bot);
 registerGenderSettingsHandlers(bot);
 
-bot.catch((err) => console.error('Bot error:', err.error));
+bot.catch(async (err) => {
+    const { ctx, error } = err;
+    console.error(
+        `Bot handler failed: update=${ctx.update.update_id} user=${ctx.from?.id ?? 'unknown'}`,
+        error,
+    );
+
+    // Make a failed callback stop spinning, even when its handler failed before
+    // acknowledging it. Telegram may reject this if it was already answered.
+    if (ctx.callbackQuery) {
+        await ctx.answerCallbackQuery({
+            text: 'Something went wrong. Please try again.',
+        }).catch(() => undefined);
+    }
+
+    // Do not send unsolicited error messages into groups/channels.
+    if (ctx.chat?.type === 'private' && ctx.from) {
+        await ctx.reply(
+            'I could not complete that action. Your previous step may not have been saved. Please try again or send /start.',
+        ).catch((replyError) => {
+            console.error('Could not send the user-facing error message:', replyError);
+        });
+    }
+});
 
 // Checks for new offers every 30 seconds, skipping a check if the last one is still running.
 let checking = false;
