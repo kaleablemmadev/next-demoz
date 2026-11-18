@@ -41,6 +41,34 @@ if (!token || !publicUrl || !pathSecret || !tokenSecret) {
 
 const bot = new Bot(token);
 
+// Prevent the same user from executing the same button action concurrently.
+// This is a per-process guard; database constraints and state checks remain the durable protection.
+const inFlightCallbackActions = new Set<string>();
+
+bot.use(async (ctx, next) => {
+    const query = ctx.callbackQuery;
+    if (!query) return next();
+
+    const target = query.message
+        ? `${query.message.chat.id}:${query.message.message_id}`
+        : query.inline_message_id ?? 'inline';
+    const key = `${query.from.id}:${target}:${query.data ?? ''}`;
+
+    if (inFlightCallbackActions.has(key)) {
+        await ctx.answerCallbackQuery({ text: 'This action is already being processed.' }).catch((err) => {
+            console.warn('Could not acknowledge duplicate callback:', err);
+        });
+        return;
+    }
+
+    inFlightCallbackActions.add(key);
+    try {
+        await next();
+    } finally {
+        inFlightCallbackActions.delete(key);
+    }
+});
+
 // Setup helper: prints the ID of every chat the bot sees, so you can copy it into the Organization table.
 bot.use(async (ctx, next) => {
     if (ctx.chat) {
