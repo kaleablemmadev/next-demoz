@@ -606,10 +606,25 @@ export function registerSignupHandlers(bot: Bot) {
             [telegramId, target.kind, ctx.chat.id, code]
         );
 
-        await ctx.api.sendMessage(
-            ctx.chat.id,
-            `NextTutor setup code: ${code}\n\nThe owner should enter this code in a private chat with @${BOT_USERNAME}.`
-        );
+        // The code goes only to the owner in private. Anyone in the group could otherwise copy it and claim the business.
+        try {
+            await ctx.api.sendMessage(
+                telegramId,
+                `NextTutor setup code for your ${label(target.kind)}: ${code}\n\n` +
+                `Type this code here to confirm you own the ${label(target.kind)}.`
+            );
+            await ctx.api.sendMessage(
+                ctx.chat.id,
+                'NextTutor setup has started for this chat. The owner will confirm it privately with the bot.'
+            );
+        } catch (err) {
+            console.error('Could not send the setup code privately:', err);
+            await ctx.api.sendMessage(
+                ctx.chat.id,
+                `Could not send the setup code to the owner privately. The owner should open a private chat with @${BOT_USERNAME} and send /start, then add the bot again.`
+            ).catch(() => undefined);
+            return;
+        }
 
         const { stage, chats: updated } = await advance(telegramId);
 
