@@ -3,7 +3,7 @@
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
 import { KNOWN_SUB_CITIES } from '../../shared/rules/nearby-areas.js';
-import { offerMatchesSearch, type SearchFilters } from '../../shared/rules/search.js';
+import type { SearchFilters } from '../../shared/rules/search.js';
 import { GRADES } from './curriculum.js';
 import { offerText, type OpenOffer } from './offers.js';
 
@@ -170,7 +170,7 @@ export function registerSearchHandlers(bot: Bot) {
         if (await ignoreRapidRepeat(ctx, 'show')) return;
         await ctx.answerCallbackQuery();
 
-        const { rows } = await pool.query(`
+        const { rows } = await pool.query<OpenOffer>(`
             SELECT t.id, t.title, t."gradeLevels", t."subCity", t."locationDetail",
                    t."sessionsPerWeek", t."sessionHours", t."salaryUnit", t."salaryAmountEtb",
                    t."monthlySalaryEtb", t."preferredTutorGender", t.requirements,
@@ -179,10 +179,13 @@ export function registerSearchHandlers(bot: Bot) {
             FROM "TutoringOffer" t
             JOIN "Organization" o ON o.id = t."organizationId"
             WHERE t.status = 'OPEN'
+              AND (cardinality($1::text[]) = 0 OR t."gradeLevels" && $1::text[])
+              AND (cardinality($2::text[]) = 0 OR t."subCity" = ANY($2::text[]))
+              AND ($3 IS NULL OR t."preferredTutorGender" IS NULL OR t."preferredTutorGender" = $3)
             ORDER BY t."postedAt" DESC
-        `);
+        `, [f.grades, f.areas, f.gender]);
 
-        const results: OpenOffer[] = rows.filter((o) => offerMatchesSearch(o, f));
+        const results = rows;
 
         if (results.length === 0) {
             return ctx.reply('No open offers match these filters. Try widening them from the menu.');
