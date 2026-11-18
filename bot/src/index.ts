@@ -38,8 +38,16 @@ const publicUrl = process.env.PUBLIC_URL;             // e.g. https://nextdemoz-
 const pathSecret = process.env.WEBHOOK_PATH_SECRET;   // random string, part of the URL
 const tokenSecret = process.env.WEBHOOK_TOKEN_SECRET; // random string, checked on every request
 
-if (!token || !publicUrl || !pathSecret || !tokenSecret) {
-    throw new Error('Missing TELEGRAM_BOT_TOKEN, PUBLIC_URL, WEBHOOK_PATH_SECRET or WEBHOOK_TOKEN_SECRET.');
+const processRole = process.env.BOT_PROCESS_ROLE ?? 'all';
+if (!['all', 'webhook', 'worker'].includes(processRole)) {
+    throw new Error('BOT_PROCESS_ROLE must be one of: all, webhook, worker.');
+}
+
+if (!token) {
+    throw new Error('Missing TELEGRAM_BOT_TOKEN.');
+}
+if (processRole !== 'worker' && (!publicUrl || !pathSecret || !tokenSecret)) {
+    throw new Error('Webhook mode requires PUBLIC_URL, WEBHOOK_PATH_SECRET and WEBHOOK_TOKEN_SECRET.');
 }
 
 const bot = new Bot(token);
@@ -155,40 +163,49 @@ bot.catch(async (err) => {
     }
 });
 
-// Checks for new offers every 30 seconds, skipping a check if the last one is still running.
-let checking = false;
-setInterval(async () => {
-    if (checking) return;
-    checking = true;
-    try {
-        await sendPendingAlerts(bot);
-        await sendOfferReports(bot);
-    } catch (err) {
-        console.error('Alert check failed:', err);
-    } finally {
-        checking = false;
-    }
-}, 30_000);
+// Background work can run in a dedicated Render Background Worker by setting
+// BOT_PROCESS_ROLE=worker. Keep exactly one worker instance until every scheduler
+// has distributed locking. The default "all" preserves the existing single-service setup.
+if (processRole !== 'webhook') {
+    // Checks for new offers every 30 seconds, skipping a check if the last one is still running.
+    let checking = false;
+    const runAlerts = async () => {
+        if (checking) return;
+        checking = true;
+        try {
+            await sendPendingAlerts(bot);
+            await sendOfferReports(bot);
+        } catch (err) {
+            console.error('Alert check failed:', err);
+        } finally {
+            checking = false;
+        }
+    };
+    runAlerts();
+    setInterval(runAlerts, 30_000);
 
-startDigestScheduler(bot);
-startRepostScheduler(bot);
-startAdminSummary(bot);
-startParentRouter(bot);
-startRenewalReminders(bot);
+    startDigestScheduler(bot);
+    startRepostScheduler(bot);
+    startAdminSummary(bot);
+    startParentRouter(bot);
+    startRenewalReminders(bot);
+}
 
-// Telegram sends each message here. Only requests with the right path and token are handled.
-const handleUpdate = webhookCallback(bot, 'http', { secretToken: tokenSecret });
-const webhookPath = `/webhook/${pathSecret}`;
+// Telegram sends each message here. Only webhook/all roles accept updates.
+const handleUpdate = processRole === 'worker'
+    ? null
+    : webhookCallback(bot, 'http', { secretToken: tokenSecret! });
+const webhookPath = pathSecret ? `/webhook/${pathSecret}` : '';
 const port = Number(process.env.PORT ?? 3000);
 
 const server = http.createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/health') {
         res.writeHead(200, { 'Content-Type': 'text/plain' });
-        res.end('ok');
+        res.end(`ok: ${processRole}`);
         return;
     }
 
-    if (req.method === 'POST' && req.url === webhookPath) {
+    if (processRole !== 'worker' && req.method === 'POST' && req.url === webhookPath && handleUpdate) {
         handleUpdate(req, res).catch((err) => console.error('Webhook error:', err));
         return;
     }
@@ -200,8 +217,15 @@ const server = http.createServer((req, res) => {
 server.listen(port, () => {
     console.log(`Listening on port ${port}`);
 
-    bot.api
-        .setWebhook(`${publicUrl}${webhookPath}`, { secret_token: tokenSecret })
-        .then(() => console.log('Webhook set.'))
-        .catch((err) => console.error('Could not set webhook:', err));
+    if (processRole !== 'worker') {
+        bot.api
+            .setWebhook(`${publicUrl}${webhookPath}`, {
+                secret_token: tokenSecret!,
+                max_connections: 40,
+            })
+            .then(() => console.log('Webhook set.'))
+            .catch((err) => console.error('Could not set webhook:', err));
+    } else {
+        console.log('Background worker started; webhook registration is disabled in this process.');
+    }
 });
