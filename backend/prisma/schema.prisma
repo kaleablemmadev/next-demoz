@@ -473,7 +473,7 @@ model TutoringOffer {
 }
 
 model TelegramSubscriber {
-  id            String           @id @default(uuid())
+  id            String           @id @default(dbgenerated("(gen_random_uuid())::text"))
   telegramId    BigInt           @unique
   firstName     String?
   username      String?
