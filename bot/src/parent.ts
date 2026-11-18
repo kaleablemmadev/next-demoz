@@ -101,7 +101,7 @@ async function ask(ctx: Context, d: Draft) {
             });
         case 'weak':
             return ctx.reply(
-                'Optional: which subjects does the child find difficult? Type them, for example "Math, English". Or tap Skip.',
+                'Which subject(s) does the child need help with? Type them, for example "Mathematics, English". Or tap Skip.',
                 { reply_markup: new InlineKeyboard().text('Skip', `pr:skip:${d.id}:weak`) }
             );
         case 'sessions':
@@ -141,7 +141,7 @@ function summary(d: Draft): string[] {
         `Grade: ${d.gradeLevel}`,
         `Area: ${d.subCity}`,
         d.locationDetail ? `Location: ${d.locationDetail}` : null,
-        `Weak subjects: ${d.weakSubjects ?? 'Not specified'}`,
+        `Subjects needed: ${d.weakSubjects ?? 'Not specified'}`,
         `Sessions: ${d.sessionsPerWeek} per week`,
         `Budget: ${d.budgetEtb?.toLocaleString()} ETB per month`,
         `Tutor gender: ${gender}`,
