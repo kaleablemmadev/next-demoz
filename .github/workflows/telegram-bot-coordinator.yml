@@ -12,6 +12,7 @@ on:
       - 'reliability/**'
     paths:
       - 'bot/**'
+      - 'backend/prisma/**'
       - '.github/workflows/telegram-bot-coordinator.yml'
       - 'shared/**'
 
