@@ -30,6 +30,8 @@ import { startRenewalReminders } from './renewals.js';
 import { sendOfferReports } from './offer-report.js';
 import { startAdminSummary, registerSummaryCommand } from './admin-summary.js';
 import { UserUpdateCoordinator } from './update-coordinator.js';
+import { registerParentStatusHandlers } from './parent-status.js';
+import { registerSupplyHandlers } from './supply.js';
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const publicUrl = process.env.PUBLIC_URL;             // e.g. https://nextdemoz-bot.onrender.com
@@ -115,6 +117,8 @@ registerSubscriptionHandlers(bot);
 registerPaymentHandlers(bot);
 registerAgencyHandlers(bot);
 registerSummaryCommand(bot);
+registerSupplyHandlers(bot);
+registerParentStatusHandlers(bot);
 registerParentHandlers(bot);
 registerSettingsHandlers(bot);
 registerRepostHandlers(bot);
