@@ -370,11 +370,11 @@ export function registerAgencyHandlers(bot: Bot) {
             await pool.query(
                 `WITH created_offer AS (
                     INSERT INTO "TutoringOffer"
-                     ("organizationId", "title", "subject", "gradeLevel", "gradeLevels",
+                     ("organizationId", "title", "gradeLevel", "gradeLevels",
                       "subCity", "locationDetail", "monthlySalaryEtb", "salaryUnit",
                       "salaryAmountEtb", "sessionHours", "sessionsPerWeek",
                       "preferredTutorGender", "requirements", "status")
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'OPEN')
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'OPEN')
                      RETURNING id, "organizationId"
                  )
                  INSERT INTO "AuditEvent"
@@ -386,7 +386,6 @@ export function registerAgencyHandlers(bot: Bot) {
                 [
                     d.orgId,
                     title,
-                    d.subject,
                     d.grades[0] ?? 'Not specified',
                     d.grades,
                     d.subCity,

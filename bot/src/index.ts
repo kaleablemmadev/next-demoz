@@ -189,7 +189,7 @@ const server = http.createServer((req, res) => {
     }
 
     if (req.method === 'POST' && req.url === webhookPath) {
-        handleUpdate(req, res);
+        handleUpdate(req, res).catch((err) => console.error('Webhook error:', err));
         return;
     }
 
