@@ -26,6 +26,7 @@ export function registerSubscriptionHandlers(bot: Bot) {
         const handle = rawUser.replace(/^@/, '');
 
         const client = await pool.connect();
+        let created: { orgName: string; endsAt: Date } | null = null;
         try {
             await client.query('BEGIN');
 
@@ -62,19 +63,24 @@ export function registerSubscriptionHandlers(bot: Bot) {
             );
 
             await client.query('COMMIT');
-
-            await ctx.reply(
-                `Subscribed ${org.name} to ${choice.plan} for ${DAYS} days.\n` +
-                `Price: ${choice.priceEtb.toLocaleString()} ETB\n` +
-                `Ends: ${rows[0].endsAt.toLocaleDateString('en-GB')}\n\n` +
-                `Collect the payment manually, as agreed.`
-            );
+            created = { orgName: org.name, endsAt: rows[0].endsAt };
         } catch (err) {
-            await client.query('ROLLBACK');
+            await client.query('ROLLBACK').catch(() => undefined);
             console.error('Subscribe failed:', err);
-            await ctx.reply('Could not create the subscription. Nothing was changed.');
         } finally {
             client.release();
+        }
+
+        // Reply only after the transaction is settled, so a reply error cannot misreport the result.
+        if (created) {
+            await ctx.reply(
+                `Subscribed ${created.orgName} to ${choice.plan} for ${DAYS} days.\n` +
+                `Price: ${choice.priceEtb.toLocaleString()} ETB\n` +
+                `Ends: ${created.endsAt.toLocaleDateString('en-GB')}\n\n` +
+                `Collect the payment manually, as agreed.`
+            );
+        } else {
+            await ctx.reply('Could not create the subscription. Nothing was changed.');
         }
     });
 }
