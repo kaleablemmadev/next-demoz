@@ -44,7 +44,8 @@ export const OFFER_PLACEHOLDERS = {
 export type CardOffer = {
     id?: string;
     title: string;
-    subject?: string | null; // legacy: subjects were removed from offers
+    subject?: string | null; // legacy single-subject field
+    subjects?: string[];
     gradeLevels: string[];
     subCity: string;
     locationDetail: string | null;
@@ -119,7 +120,7 @@ export function offerCardText(
                 'Any';
 
     const values: Record<string, string> = {
-        SUBJECT: o.subject || 'Not specified',
+        SUBJECT: o.subjects?.length ? o.subjects.join(', ') : o.subject || 'Not specified',
         GRADES: gradeLabel(o.gradeLevels),
         SUB_CITY: o.subCity || 'Not specified',
         LOCATION: o.locationDetail || 'Not specified',
