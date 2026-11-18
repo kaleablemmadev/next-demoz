@@ -383,7 +383,7 @@ export function registerAgencyHandlers(bot: Bot) {
                  INSERT INTO "AuditEvent"
                     ("actorRef", "actorType", action, "entityType", "entityRef", metadata)
                  SELECT o."auditRef", 'AGENCY', 'OFFER_CREATED', 'TUTORING_OFFER',
-                        created_offer.id, '{}'::jsonb
+                        created_offer.id::uuid, '{}'::jsonb
                  FROM created_offer
                  JOIN "Organization" o ON o.id = created_offer."organizationId"`,
                 [
