@@ -3,7 +3,7 @@
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { randomUUID } from 'node:crypto';
 import { pool } from './db.js';
-import { askGender } from './gender.js';
+import { askSubjects } from './subjects.js';
 import { GRADES } from './curriculum.js';
 
 async function selectedGrades(telegramId: number): Promise<string[]> {
@@ -66,7 +66,7 @@ export function registerGradeHandlers(bot: Bot) {
             activeGradeSessions.delete(id);
             await ctx.answerCallbackQuery();
             await ctx.editMessageText(`Grades: ${selected.join(', ')}`);
-            return askGender(ctx);
+            return askSubjects(ctx);
         }
 
         let next: string[];
