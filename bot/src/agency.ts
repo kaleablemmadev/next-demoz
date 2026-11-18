@@ -163,7 +163,7 @@ async function ask(ctx: Context, d: Draft) {
             });
         case 'subjects':
             return ctx.reply(
-                `Which subjects does this offer cover? Type up to ${MAX_SUBJECTS}, separated by commas.\\nExample: Mathematics, Physics, Chemistry.`
+                `Which subjects does this offer cover? Type up to ${MAX_SUBJECTS}, separated by commas.\nExample: Mathematics, Physics, Chemistry.`
             );
         case 'area':
             return ctx.reply('Which sub-city?', {
