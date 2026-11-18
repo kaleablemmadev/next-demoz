@@ -5,6 +5,7 @@ import http from 'node:http';
 import { Bot, webhookCallback } from 'grammy';
 import { registerOnboardingHandlers, startTutorOnboarding } from './onboarding.js';
 import { registerGradeHandlers } from './grades.js';
+import { registerSubjectHandlers } from './subjects.js';
 import { registerSalaryHandlers } from './salary.js';
 import { registerOfferHandlers } from './offers.js';
 import { sendPendingAlerts } from './publish.js';
@@ -111,6 +112,7 @@ bot.use(async (ctx, next) => {
 });
 
 registerOnboardingHandlers(bot);
+registerSubjectHandlers(bot);
 
 bot.on('callback_query:data', (ctx, next) => { console.log('Button pressed:', ctx.callbackQuery.data); return next(); });
 
