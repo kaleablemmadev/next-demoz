@@ -136,7 +136,7 @@ export function registerSearchHandlers(bot: Bot) {
         if (await ignoreRapidRepeat(ctx, `all:${field}`)) return;
         f[field] = [...optionsFor(field, ctx.from.id)];
         await ctx.answerCallbackQuery();
-        await ctx.editMessageReplyMarkup({ reply_markup: pickKeyboard(field, f[field]) });
+        await ctx.editMessageReplyMarkup({ reply_markup: pickKeyboard(field, f[field], optionsFor(field, ctx.from.id)) });
     });
 
     bot.callbackQuery(/^sr:clear:(subjects|grades|areas)$/, async (ctx) => {
@@ -146,7 +146,7 @@ export function registerSearchHandlers(bot: Bot) {
         if (await ignoreRapidRepeat(ctx, `clear:${field}`)) return;
         f[field] = [];
         await ctx.answerCallbackQuery();
-        await ctx.editMessageReplyMarkup({ reply_markup: pickKeyboard(field, f[field]) });
+        await ctx.editMessageReplyMarkup({ reply_markup: pickKeyboard(field, f[field], optionsFor(field, ctx.from.id)) });
     });
 
     bot.callbackQuery('sr:menu', async (ctx) => {
