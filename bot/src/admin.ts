@@ -327,7 +327,7 @@ export function registerAdminHandlers(bot: Bot) {
         adminCallback(async (ctx) => {
             const id = (ctx.match as RegExpMatchArray)[1];
             const outcome = await withTransaction(async (client) => {
-                const { rows } = await client.query<{ name: string; auditRef: string }>(
+                const { rows } = await client.query<{ name: string; auditRef: string; telegramUserId: string | null }>(
                     `SELECT name, "auditRef", "telegramUserId" FROM "Organization" WHERE id = $1 FOR UPDATE`,
                     [id],
                 );
