@@ -15,14 +15,14 @@ export type OpenOffer = CardOffer & {
 // Apply the matching rules in PostgreSQL so the bot does not download every open offer.
 export async function findMatchingOffers(telegramId: number | string): Promise<OpenOffer[]> {
     const me = await pool.query(
-        `SELECT "subCity", grades, "minSalaryEtb", gender FROM "TelegramSubscriber" WHERE "telegramId" = $1`,
+        `SELECT "subCity", subjects, grades, "minSalaryEtb", gender FROM "TelegramSubscriber" WHERE "telegramId" = $1`,
         [telegramId]
     );
     const tutor = me.rows[0];
     if (!tutor || !tutor.subCity) return [];
 
     const { rows } = await pool.query<OpenOffer>(`
-        SELECT t.id, t.title, t."gradeLevels", t."subCity", t."locationDetail",
+        SELECT t.id, t.title, t.subject, t.subjects, t."gradeLevels", t."subCity", t."locationDetail",
                t."sessionsPerWeek", t."sessionHours", t."salaryUnit", t."salaryAmountEtb",
                t."monthlySalaryEtb", t."preferredTutorGender", t.requirements,
                o."postTemplate", o.name AS "agencyName",
@@ -35,12 +35,25 @@ export async function findMatchingOffers(telegramId: number | string): Promise<O
           AND t."gradeLevels" <@ $2::text[]
           AND ($3 IS NULL OR t."monthlySalaryEtb" >= $3)
           AND (t."preferredTutorGender" IS NULL OR t."preferredTutorGender" = $4)
+          AND (
+            cardinality(COALESCE(NULLIF(t.subjects, ARRAY[]::text[]),
+              CASE WHEN t.subject IS NOT NULL AND btrim(t.subject) <> '' THEN ARRAY[t.subject]::text[] ELSE ARRAY[]::text[] END)) = 0
+            OR cardinality($5::text[]) = 0
+            OR EXISTS (
+              SELECT 1
+              FROM unnest(COALESCE(NULLIF(t.subjects, ARRAY[]::text[]),
+                CASE WHEN t.subject IS NOT NULL AND btrim(t.subject) <> '' THEN ARRAY[t.subject]::text[] ELSE ARRAY[]::text[] END)) offer_subject
+              JOIN unnest($5::text[]) tutor_subject
+                ON lower(btrim(offer_subject)) = lower(btrim(tutor_subject))
+            )
+          )
         ORDER BY t."postedAt" DESC
     `, [
         areasNear(tutor.subCity),
         tutor.grades ?? [],
         tutor.minSalaryEtb,
         tutor.gender,
+        tutor.subjects ?? [],
     ]);
 
     return rows;
