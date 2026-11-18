@@ -4,8 +4,8 @@ import { Bot, type Context } from 'grammy';
 import { pool } from './db.js';
 import { askGender } from './gender.js';
 
-const MAX_SUBJECTS = 12;
-const MAX_SUBJECT_LENGTH = 60;
+export const MAX_SUBJECTS = 12;
+export const MAX_SUBJECT_LENGTH = 60;
 const SESSION_TTL_MS = 15 * 60 * 1000;
 
 type SubjectSession = { startedAt: number };
