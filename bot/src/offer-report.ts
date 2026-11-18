@@ -9,6 +9,8 @@ type Offer = {
     title: string;
     subCity: string;
     gradeLevels: string[];
+    subject: string | null;
+    subjects: string[];
     monthlySalaryEtb: number;
     preferredTutorGender: 'MALE' | 'FEMALE' | null;
     agencyTelegramUserId: string | null;
@@ -20,6 +22,7 @@ type Offer = {
 type Tutor = {
     subCity: string;
     grades: string[];
+    subjects: string[];
     minSalaryEtb: number | null;
     gender: 'MALE' | 'FEMALE' | null;
 };
@@ -32,6 +35,8 @@ function tipsFor(o: Offer, tutors: Tutor[], matched: number): string[] {
     let gradeMiss = 0;
     let salaryMiss = 0;
     let genderMiss = 0;
+    let subjectMiss = 0;
+    const offerSubjects = o.subjects?.length ? o.subjects : (o.subject ? [o.subject] : []);
     const salaryMins: number[] = [];
 
     for (const t of tutors) {
@@ -39,8 +44,9 @@ function tipsFor(o: Offer, tutors: Tutor[], matched: number): string[] {
         const hasGrades = o.gradeLevels.every((g) => t.grades.includes(g));
         const meetsSalary = t.minSalaryEtb === null || o.monthlySalaryEtb >= t.minSalaryEtb;
         const genderOk = o.preferredTutorGender === null || t.gender === o.preferredTutorGender;
+        const subjectOk = offerSubjects.length === 0 || t.subjects.length === 0 || offerSubjects.some((wanted) => t.subjects.some((actual) => wanted.trim().toLocaleLowerCase() === actual.trim().toLocaleLowerCase()));
 
-        const misses = [!inArea, !hasGrades, !meetsSalary, !genderOk].filter(Boolean).length;
+        const misses = [!inArea, !hasGrades, !meetsSalary, !genderOk, !subjectOk].filter(Boolean).length;
         if (misses !== 1) continue; // only tutors who missed exactly one thing are useful to point out
 
         if (!inArea) areaMiss++;
@@ -63,6 +69,9 @@ function tipsFor(o: Offer, tutors: Tutor[], matched: number): string[] {
     }
     if (gradeMiss > 0) {
         tips.push(`${gradeMiss} tutor(s) fit everything except the grades. Check whether the grade range is too narrow.`);
+    }
+    if (subjectMiss > 0) {
+        tips.push(`${subjectMiss} tutor(s) fit everything except the subjects. Review the subjects selected for this offer.`);
     }
     if (areaMiss > 0) {
         tips.push(`${areaMiss} tutor(s) are in other areas. The offer area is fixed, so these tutors cannot be reached for this offer.`);
@@ -104,7 +113,7 @@ async function reportFor(bot: Bot, o: Offer, tutors: Tutor[]) {
 // Sends each agency its report once, after the offer is alerted and posted (or cannot be posted).
 export async function sendOfferReports(bot: Bot): Promise<void> {
     const { rows } = await pool.query<Offer>(`
-        SELECT t.id, t.title, t."subCity", t."gradeLevels", t."monthlySalaryEtb", t."preferredTutorGender",
+        SELECT t.id, t.title, t."subCity", t."gradeLevels", t.subject, t.subjects, t."monthlySalaryEtb", t."preferredTutorGender",
                o."telegramUserId"::text AS "agencyTelegramUserId",
                (o."groupChatId" IS NOT NULL OR o."channelChatId" IS NOT NULL) AS "hasDestination",
                (t."groupMessageId" IS NOT NULL OR t."channelMessageId" IS NOT NULL) AS posted,
@@ -125,7 +134,7 @@ export async function sendOfferReports(bot: Bot): Promise<void> {
     if (rows.length === 0) return;
 
     const { rows: tutorRows } = await pool.query<Tutor>(`
-        SELECT "subCity", grades, "minSalaryEtb", gender
+        SELECT "subCity", subjects, grades, "minSalaryEtb", gender
         FROM "TelegramSubscriber"
         WHERE "subCity" IS NOT NULL AND status IN ('ACTIVE', 'PAUSED')
     `);

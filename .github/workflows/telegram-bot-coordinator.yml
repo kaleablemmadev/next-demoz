@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'bot/**'
+      - 'backend/prisma/**'
       - '.github/workflows/telegram-bot-coordinator.yml'
       - 'shared/**'
   push:
@@ -11,10 +12,28 @@ on:
       - 'reliability/**'
     paths:
       - 'bot/**'
+      - 'backend/prisma/**'
       - '.github/workflows/telegram-bot-coordinator.yml'
       - 'shared/**'
 
 jobs:
+  prisma-schema:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm install --no-audit --no-fund
+      - run: npx prisma validate --config prisma7.config.ts
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/nexttutor
+
   bot:
     runs-on: ubuntu-latest
     defaults:

@@ -406,8 +406,74 @@ enum InvitationVerificationStatus {
 // Schema for Telegram Bot
 // Telegram tutor subscribers. Separate from User, so tutors can use the bot
 // without making an app account. A link to User can be added later.
+
+model Organization {
+  id               String   @id @default(dbgenerated("(gen_random_uuid())::text"))
+  name             String
+  telegramUsername String
+  description      String?
+  channelUsername  String?
+  createdAt        DateTime @default(now()) @db.Timestamp(6)
+  channelChatId    BigInt?
+  language         String   @default("EN")
+  postHeader       String?
+  postFooter       String?
+  groupChatId      BigInt?
+  postDestination  String   @default("GROUP")
+  telegramUserId   BigInt?
+  status           String   @default("ACTIVE")
+  ownerUsername    String?
+  setupStep        String?
+  verifyCode       String?
+  paymentReference String?
+  chatUsername     String?
+  setupExpiresAt   DateTime? @db.Timestamptz(6)
+  templateStep     String?
+  postTemplate     String?
+  auditRef         String   @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  offers TutoringOffer[]
+}
+
+model TutoringOffer {
+  id                    String    @id @default(dbgenerated("(gen_random_uuid())::text"))
+  organizationId        String
+  title                 String
+  gradeLevel            String
+  city                  String    @default("Addis Ababa")
+  subCity               String
+  monthlySalaryEtb      Int
+  sessionsPerWeek       Int
+  preferredTutorGender  String?
+  status                String    @default("OPEN")
+  postedAt              DateTime  @default(now()) @db.Timestamp(6)
+  closedAt              DateTime? @db.Timestamp(6)
+  alertedAt             DateTime? @db.Timestamp(6)
+  channelMessageId      BigInt?
+  lastPostedToChannelAt DateTime? @db.Timestamp(6)
+  repostEveryDays       Int       @default(3)
+  gradeLevels           String[]  @default([])
+  salaryUnit            String    @default("MONTH")
+  salaryAmountEtb       Int?
+  sessionHours          Decimal?  @db.Decimal(65, 30)
+  locationDetails       String?
+  requirements          String?
+  applyContact          String?
+  locationDetail        String?
+  groupMessageId        BigInt?
+  postFailures          Int       @default(0)
+  repostStopped         Boolean   @default(false)
+  agencyReportedAt      DateTime? @db.Timestamp(6)
+  subject               String?
+  subjects              String[]  @default([])
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, status], map: "TutoringOffer_organization_status_idx")
+}
+
 model TelegramSubscriber {
-  id            String           @id @default(uuid())
+  id            String           @id @default(dbgenerated("(gen_random_uuid())::text"))
   telegramId    BigInt           @unique
   firstName     String?
   username      String?
@@ -420,8 +486,11 @@ model TelegramSubscriber {
   pausedUntil   DateTime?
   createdAt     DateTime         @default(now())
 
-  preferences NotificationPreference[]
-  deliveries  OfferDelivery[]
+  gender        String?
+  auditRef      String   @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  preferences   NotificationPreference[]
+  deliveries    OfferDelivery[]
+
 }
 
 enum SubscriberStatus {
