@@ -6,6 +6,7 @@ import { pool } from './db.js';
 
 import { KNOWN_SUB_CITIES } from '../../shared/rules/nearby-areas.js';
 import { GRADES } from './curriculum.js';
+import { MAX_SUBJECT_LENGTH, MAX_SUBJECTS, parseTutorSubjects } from './subjects.js';
 import {
     DEFAULT_OFFER_TEMPLATE,
     OFFER_PLACEHOLDERS,
@@ -25,6 +26,7 @@ type Draft = {
     postTemplate: string | null;
     step:
     | 'grades'
+    | 'subjects'
     | 'area'
     | 'location'
     | 'sessions'
@@ -35,6 +37,7 @@ type Draft = {
     | 'requirements'
     | 'confirm';
     grades: string[];
+    subjects: string[];
     subCity?: string;
     locationDetail?: string | null;
     sessionsPerWeek?: number;
@@ -133,6 +136,8 @@ function offerLines(d: Draft): string[] {
     const offer: CardOffer = {
         title: `Tutor (${listLabel(d.grades, GRADES, 'All Grades', 'Not specified')})`,
         gradeLevels: d.grades,
+        subject: d.subjects[0] ?? null,
+        subjects: d.subjects,
         subCity: d.subCity ?? '',
         locationDetail: d.locationDetail ?? null,
         sessionsPerWeek: d.sessionsPerWeek ?? 0,
@@ -156,6 +161,10 @@ async function ask(ctx: Context, d: Draft) {
             return ctx.reply('Which grades? Pick one or more, or tap All.', {
                 reply_markup: multiKeyboard('grd', GRADES, d.grades, d.id),
             });
+        case 'subjects':
+            return ctx.reply(
+                `Which subjects does this offer cover? Type up to ${MAX_SUBJECTS}, separated by commas.\\nExample: Mathematics, Physics, Chemistry.`
+            );
         case 'area':
             return ctx.reply('Which sub-city?', {
                 reply_markup: choices('area', KNOWN_SUB_CITIES.map((c) => [c, c] as [string, string]), d.id, 3),
@@ -245,6 +254,7 @@ export function registerAgencyHandlers(bot: Bot) {
             postTemplate: agency.postTemplate ?? null,
             step: 'grades',
             grades: [],
+            subjects: [],
         };
         drafts.set(ctx.from!.id, draft);
         await ask(ctx, draft);
@@ -274,7 +284,7 @@ export function registerAgencyHandlers(bot: Bot) {
             }
             await ctx.answerCallbackQuery();
             await ctx.editMessageText(`Grades: ${listLabel(d.grades, GRADES, 'All Grades', 'Not specified')}`);
-            d.step = 'area';
+            d.step = 'subjects';
             return ask(ctx, d);
         }
 
@@ -363,11 +373,11 @@ export function registerAgencyHandlers(bot: Bot) {
             await pool.query(
                 `WITH created_offer AS (
                     INSERT INTO "TutoringOffer"
-                     ("organizationId", "title", "gradeLevel", "gradeLevels",
+                     ("organizationId", "title", "gradeLevel", "gradeLevels", "subject", "subjects",
                       "subCity", "locationDetail", "monthlySalaryEtb", "salaryUnit",
                       "salaryAmountEtb", "sessionHours", "sessionsPerWeek",
                       "preferredTutorGender", "requirements", "status")
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'OPEN')
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'OPEN')
                      RETURNING id, "organizationId"
                  )
                  INSERT INTO "AuditEvent"
@@ -381,6 +391,8 @@ export function registerAgencyHandlers(bot: Bot) {
                     title,
                     d.grades[0] ?? 'Not specified',
                     d.grades,
+                    d.subjects[0] ?? null,
+                    d.subjects,
                     d.subCity,
                     d.locationDetail ?? null,
                     monthlyOf(d),
@@ -472,6 +484,23 @@ export function registerAgencyHandlers(bot: Bot) {
         if (text.startsWith('/')) {
             drafts.delete(ctx.from.id);
             return next();
+        }
+
+        if (d.step === 'subjects') {
+            const subjects = parseTutorSubjects(text);
+            if (subjects.length === 0) {
+                return ctx.reply('Please enter at least one subject, separated by commas.');
+            }
+            if (subjects.length > MAX_SUBJECTS) {
+                return ctx.reply(`Please enter no more than ${MAX_SUBJECTS} subjects.`);
+            }
+            const tooLong = subjects.find((subject) => subject.length > MAX_SUBJECT_LENGTH);
+            if (tooLong) {
+                return ctx.reply(`Each subject must be ${MAX_SUBJECT_LENGTH} characters or fewer. Please shorten: ${tooLong}`);
+            }
+            d.subjects = subjects;
+            d.step = 'area';
+            return ask(ctx, d);
         }
 
         if (d.step === 'location') {
