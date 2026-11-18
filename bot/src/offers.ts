@@ -13,7 +13,7 @@ export type OpenOffer = CardOffer & {
 
 // Every open offer this tutor fully matches: all grades, area, salary and gender.
 // Apply the matching rules in PostgreSQL so the bot does not download every open offer.
-export async function findMatchingOffers(telegramId: number): Promise<OpenOffer[]> {
+export async function findMatchingOffers(telegramId: number | string): Promise<OpenOffer[]> {
     const me = await pool.query(
         `SELECT "subCity", grades, "minSalaryEtb", gender FROM "TelegramSubscriber" WHERE "telegramId" = $1`,
         [telegramId]

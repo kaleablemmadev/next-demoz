@@ -40,8 +40,8 @@ async function claimDigest(dateKey: string): Promise<boolean> {
 }
 
 // Active subscribers who haven't paused alerts or switched off offer alerts.
-async function digestRecipients(): Promise<number[]> {
-    const { rows } = await pool.query(`
+async function digestRecipients(): Promise<string[]> {
+    const { rows } = await pool.query<{ telegramId: string }>(`
         SELECT s."telegramId"::text AS "telegramId"
         FROM "TelegramSubscriber" s
         WHERE s."subCity" IS NOT NULL
@@ -56,51 +56,54 @@ async function digestRecipients(): Promise<number[]> {
               AND p.enabled = false
         )
     `);
-    return rows.map((r) => Number(r.telegramId));
+    return rows.map((r) => r.telegramId);
 }
 
 // Sends the Monday digest. With force = true it ignores the day, hour and weekly check.
 export async function sendWeeklyDigest(bot: Bot, force = false): Promise<number> {
     const now = addisNow();
+    const digestKey = now.date;
 
     if (!force) {
         if (now.weekday !== 'Mon' || now.hour < DIGEST_HOUR) return 0;
-        if (!(await claimDigest(now.date))) return 0;
+        if (!(await claimDigest(digestKey))) return 0;
     }
 
-    let sent = 0;
+    try {
+        let sent = 0;
+        for (const telegramId of await digestRecipients()) {
+            const offers = await findMatchingOffers(telegramId);
+            if (offers.length === 0) continue;
 
-    for (const telegramId of await digestRecipients()) {
-        const offers = await findMatchingOffers(telegramId);
+            const lines = offers.slice(0, PREVIEW_LIMIT).map(
+                (o, i) =>
+                    `${i + 1}. ${o.title}\n` +
+                    `   ${summaryLine(o)}\n` +
+                    `   ${payLine(o)}\n` +
+                    `   Contact: @${o.agencyUsername}`
+            );
+            const more = offers.length > PREVIEW_LIMIT
+                ? `\n\n…and ${offers.length - PREVIEW_LIMIT} more.`
+                : '';
+            const message = `Your open offers this week (${offers.length}):\n\n${lines.join('\n\n')}${more}`;
 
-        // No message when nothing matches.
-        if (offers.length === 0) continue;
-
-        const lines = offers.slice(0, PREVIEW_LIMIT).map(
-            (o, i) =>
-                `${i + 1}. ${o.title}\n` +
-                `   ${summaryLine(o)}\n` +
-                `   ${payLine(o)}\n` +
-                `   Contact: @${o.agencyUsername}`
-        );
-
-        const more = offers.length > PREVIEW_LIMIT
-            ? `\n\n…and ${offers.length - PREVIEW_LIMIT} more.`
-            : '';
-
-        const text = `Your open offers this week (${offers.length}):\n\n${lines.join('\n\n')}${more}`;
-
-        try {
-            await bot.api.sendMessage(telegramId, text, {
-                reply_markup: new InlineKeyboard().text('Show all offers', 'offers:show'),
-            });
-            sent++;
-        } catch (err) {
-            console.error(`Digest not delivered to ${telegramId}:`, err);
+            try {
+                await bot.api.sendMessage(telegramId, message, {
+                    reply_markup: new InlineKeyboard().text('Show all offers', 'offers:show'),
+                });
+                sent++;
+            } catch (err) {
+                console.error(`Digest not delivered to ${telegramId}:`, err);
+            }
         }
+        return sent;
+    } catch (err) {
+        // A process/database failure must not permanently consume the weekly slot.
+        if (!force) {
+            await pool.query(`DELETE FROM "DigestRun" WHERE "weekKey" = $1`, [digestKey]);
+        }
+        throw err;
     }
-
-    return sent;
 }
 
 // Checks every five minutes, so the digest goes out soon after 08:00 on Monday.

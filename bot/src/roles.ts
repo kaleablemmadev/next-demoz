@@ -168,7 +168,6 @@ export function registerRoleHandlers(
     bot.command('start', async (ctx) => {
         if (!isAdmin(ctx)) await reactivateIfReturning(ctx.from!.id);
         const role = await resolveRole(ctx);
-        await ctx.reply(WELCOME_MESSAGE);
         if (role === 'admin') return showAdminMenu(ctx);
         if (role === 'agency') return showAgencyMenu(ctx);
         if (role === 'parent') return showParentMenu(ctx);
@@ -176,6 +175,7 @@ export function registerRoleHandlers(
             await setChatCommands(ctx, TUTOR_COMMANDS);
             return ctx.reply('Welcome back to NextTutor. Send /menu to see your options.');
         }
+        await ctx.reply(WELCOME_MESSAGE);
         await setChatCommands(ctx, TUTOR_COMMANDS);
         return showRolePicker(ctx, ctx.match?.toString().trim() || 'direct');
     });
