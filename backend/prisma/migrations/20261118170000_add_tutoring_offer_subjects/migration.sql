@@ -9,5 +9,3 @@ WHERE cardinality("subjects") = 0
   AND "subject" IS NOT NULL
   AND btrim("subject") <> '';
 
-CREATE INDEX IF NOT EXISTS "TutoringOffer_subjects_gin_idx"
-  ON "TutoringOffer" USING GIN ("subjects");
