@@ -2,7 +2,7 @@
 
 import { Bot } from 'grammy';
 import { pool } from './db.js';
-import { tutorMatchesOffer } from '../../shared/rules/offer-match.js';
+import { areasNear } from '../../shared/rules/nearby-areas.js';
 import { offerCardText, type CardOffer } from './card.js';
 
 export type AlertOffer = CardOffer & {
@@ -12,18 +12,19 @@ export type AlertOffer = CardOffer & {
 
 type Subscriber = {
     telegramId: string;
-    subCity: string;
-    grades: string[];
-    minSalaryEtb: number | null;
-    gender: 'MALE' | 'FEMALE' | null;
 };
 
-// Active subscribers who haven't paused alerts or switched off offer alerts.
-async function alertableSubscribers(offerId: string): Promise<Subscriber[]> {
-    const { rows } = await pool.query(`
-        SELECT s."telegramId"::text AS "telegramId", s."subCity", s.grades, s."minSalaryEtb", s.gender
+// Active subscribers who match this offer, haven't paused alerts, and haven't received it yet.
+// Keep filtering in SQL so Node.js only loads subscribers who can actually receive this alert.
+async function alertableSubscribers(offer: AlertOffer): Promise<Subscriber[]> {
+    const { rows } = await pool.query<Subscriber>(`
+        SELECT s."telegramId"::text AS "telegramId"
         FROM "TelegramSubscriber" s
-        WHERE s."subCity" IS NOT NULL
+        WHERE s."subCity" = ANY($1::text[])
+          AND cardinality($2::text[]) > 0
+          AND s.grades @> $2::text[]
+          AND (s."minSalaryEtb" IS NULL OR s."minSalaryEtb" <= $3)
+          AND ($4 IS NULL OR s.gender = $4)
           AND (
             s.status = 'ACTIVE'
             OR (s.status = 'PAUSED' AND s."pausedUntil" < now())
@@ -36,9 +37,15 @@ async function alertableSubscribers(offerId: string): Promise<Subscriber[]> {
           )
           AND NOT EXISTS (
             SELECT 1 FROM "OfferDelivery" d
-            WHERE d."subscriberId" = s.id AND d."offerId" = $1
+            WHERE d."subscriberId" = s.id AND d."offerId" = $5
           )
-    `, [offerId]);
+    `, [
+        areasNear(offer.subCity),
+        offer.gradeLevels,
+        offer.monthlySalaryEtb,
+        offer.preferredTutorGender,
+        offer.id,
+    ]);
     return rows;
 }
 
@@ -50,18 +57,7 @@ export async function sendOfferAlerts(bot: Bot, offer: AlertOffer): Promise<numb
     let sent = 0;
     const text = offerCardText(offer);
 
-    for (const sub of await alertableSubscribers(offer.id)) {
-        const matches = tutorMatchesOffer(
-            { subCity: sub.subCity, grades: sub.grades, minSalaryEtb: sub.minSalaryEtb, gender: sub.gender },
-            {
-                subCity: offer.subCity,
-                gradeLevels: offer.gradeLevels,
-                monthlyEtb: offer.monthlySalaryEtb,
-                preferredGender: offer.preferredTutorGender,
-            }
-        );
-        if (!matches) continue;
-
+    for (const sub of await alertableSubscribers(offer)) {
         try {
             await bot.api.sendMessage(sub.telegramId, text);
         } catch (err) {
