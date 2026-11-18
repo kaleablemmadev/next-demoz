@@ -77,15 +77,15 @@ export async function sendWeeklyDigest(bot: Bot, force = false): Promise<number>
 
             const lines = offers.slice(0, PREVIEW_LIMIT).map(
                 (o, i) =>
-                    `${i + 1}. ${o.title}\\n` +
-                    `   ${summaryLine(o)}\\n` +
-                    `   ${payLine(o)}\\n` +
+                    `${i + 1}. ${o.title}\n` +
+                    `   ${summaryLine(o)}\n` +
+                    `   ${payLine(o)}\n` +
                     `   Contact: @${o.agencyUsername}`
             );
             const more = offers.length > PREVIEW_LIMIT
-                ? `\\n\\n…and ${offers.length - PREVIEW_LIMIT} more.`
+                ? `\n\n…and ${offers.length - PREVIEW_LIMIT} more.`
                 : '';
-            const message = `Your open offers this week (${offers.length}):\\n\\n${lines.join('\\n\\n')}${more}`;
+            const message = `Your open offers this week (${offers.length}):\n\n${lines.join('\n\n')}${more}`;
 
             try {
                 await bot.api.sendMessage(telegramId, message, {
