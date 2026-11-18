@@ -208,7 +208,11 @@ const server = http.createServer((req, res) => {
     }
 
     if (processRole !== 'worker' && req.method === 'POST' && req.url === webhookPath && handleUpdate) {
-        handleUpdate(req, res).catch((err) => console.error('Webhook error:', err));
+        handleUpdate(req, res).catch((err) => {
+            // grammY wraps errors with the full context, which includes the bot token. Log only the inner error.
+            const inner = (err as { error?: unknown }).error ?? err;
+            console.error('Webhook error:', inner instanceof Error ? inner.stack ?? inner.message : String(inner));
+        });
         return;
     }
 

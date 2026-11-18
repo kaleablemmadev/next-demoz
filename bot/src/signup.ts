@@ -194,13 +194,15 @@ async function advance(
 
 function promptFor(stage: Stage, chats: ChatRow[]): string {
     if (stage === 'CHAT_USERNAME') {
-        const next = chats.find((chat) => !chat.username)!;
+        const next = chats.find((chat) => !chat.username);
+        if (!next) return 'Send /start to restart your business registration.';
 
         return `What is the username of your ${label(next.kind)}? For example @mytutors.`;
     }
 
     if (stage === 'ADD_BOT') {
-        const next = chats.find((chat) => !chat.chatId)!;
+        const next = chats.find((chat) => !chat.chatId);
+        if (!next) return 'Your chats are already connected. Send /start if something looks wrong.';
 
         return `Now add @${BOT_USERNAME} to your ${label(next.kind)} as an admin, with permission to post messages. I will confirm automatically when it is added.`;
     }
@@ -213,7 +215,7 @@ function promptFor(stage: Stage, chats: ChatRow[]): string {
         return `Type the setup code shown in your ${waiting.join(' and ')}.`;
     }
 
-    return '';
+    return 'Your registration is being processed. You do not need to send anything else.';
 }
 
 function ownerTemplate(s: Signup, chats: ChatRow[]): string {
@@ -894,9 +896,14 @@ export function registerSignupHandlers(bot: Bot) {
         }
 
         if (s.step === 'ADD_BOT') {
-            const chats = await getChats(telegramId);
+            // Re-check the saved chats: the bot may already be added to all of them.
+            const { stage, chats } = await advance(telegramId);
 
-            return ctx.reply(promptFor('ADD_BOT', chats));
+            if (stage === 'PAYMENT_REF' && PAYMENT_ETB === 0) {
+                return finishSignup(ctx, s, chats, null);
+            }
+
+            return ctx.reply(promptFor(stage, chats));
         }
 
         if (s.step === 'CODE') {
