@@ -1,0 +1,36 @@
+name: Telegram bot coordinator tests
+
+on:
+  pull_request:
+    paths:
+      - 'bot/src/index.ts'
+      - 'bot/src/update-coordinator.ts'
+      - 'bot/test/update-coordinator.test.ts'
+      - 'bot/vitest.coordinator.config.ts'
+      - '.github/workflows/telegram-bot-coordinator.yml'
+  push:
+    branches:
+      - 'reliability/**'
+    paths:
+      - 'bot/src/index.ts'
+      - 'bot/src/update-coordinator.ts'
+      - 'bot/test/update-coordinator.test.ts'
+      - 'bot/vitest.coordinator.config.ts'
+      - '.github/workflows/telegram-bot-coordinator.yml'
+
+jobs:
+  coordinator:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: bot/package-lock.json
+      - run: npm ci
+      - run: npx vitest run --config vitest.coordinator.config.ts test/update-coordinator.test.ts
+      - run: npx tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --skipLibCheck src/update-coordinator.ts
