@@ -2,6 +2,7 @@
 
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { pool } from './db.js';
+import { logLeft } from './agency-lifecycle.js';
 import { findAgencyByUsername, findAgencyForUser } from './roles.js';
 import { startPersonalDeparture, registerPersonalDepartureCallbacks } from './account-departure.js';
 import { recordAuditEvent, withTransaction } from './audit.js';
@@ -349,6 +350,11 @@ export function registerLeaveHandlers(bot: Bot) {
             if (!departure.handled) {
                 await ctx.answerCallbackQuery({ text: 'This request was already handled.', show_alert: true });
                 return ctx.editMessageText('This request was already handled.');
+            }
+
+            // Keep the history of a retained agency: log the departure once the change is committed.
+            if (departure.retained) {
+                await logLeft(req.organizationId).catch((err) => console.error('Could not log agency departure:', err));
             }
 
             if (req.telegramUserId) {
