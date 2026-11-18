@@ -492,7 +492,6 @@ model TelegramSubscriber {
   preferences   NotificationPreference[]
   deliveries    OfferDelivery[]
 
-  @@index([subjects(ops: ArrayOps)], type: Gin, map: "TelegramSubscriber_subjects_gin_idx")
 }
 
 enum SubscriberStatus {
