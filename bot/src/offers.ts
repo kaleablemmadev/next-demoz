@@ -33,8 +33,8 @@ export async function findMatchingOffers(telegramId: number | string): Promise<O
           AND t."subCity" = ANY($1::text[])
           AND cardinality(t."gradeLevels") > 0
           AND t."gradeLevels" <@ $2::text[]
-          AND ($3 IS NULL OR t."monthlySalaryEtb" >= $3)
-          AND (t."preferredTutorGender" IS NULL OR t."preferredTutorGender" = $4)
+          AND ($3::int IS NULL OR t."monthlySalaryEtb" >= $3::int)
+          AND (t."preferredTutorGender" IS NULL OR t."preferredTutorGender" = $4::text)
         ORDER BY t."postedAt" DESC
     `, [
         areasNear(tutor.subCity),

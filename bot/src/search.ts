@@ -181,7 +181,7 @@ export function registerSearchHandlers(bot: Bot) {
             WHERE t.status = 'OPEN'
               AND (cardinality($1::text[]) = 0 OR t."gradeLevels" && $1::text[])
               AND (cardinality($2::text[]) = 0 OR t."subCity" = ANY($2::text[]))
-              AND ($3 IS NULL OR t."preferredTutorGender" IS NULL OR t."preferredTutorGender" = $3)
+              AND ($3::text IS NULL OR t."preferredTutorGender" IS NULL OR t."preferredTutorGender" = $3::text)
             ORDER BY t."postedAt" DESC
         `, [f.grades, f.areas, f.gender]);
 
