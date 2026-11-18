@@ -7,24 +7,17 @@ import type { SearchFilters } from '../../shared/rules/search.js';
 import { GRADES } from './curriculum.js';
 import { offerText, type OpenOffer } from './offers.js';
 
-type Field = 'subjects' | 'grades' | 'areas';
+type Field = 'grades' | 'areas';
 
-const OPTIONS: Record<Exclude<Field, 'subjects'>, readonly string[]> = {
+const OPTIONS: Record<Field, readonly string[]> = {
     grades: GRADES,
     areas: KNOWN_SUB_CITIES,
 };
 
 const LABEL: Record<Field, string> = {
-    subjects: 'Subjects',
     grades: 'Grades',
     areas: 'Areas',
 };
-
-const subjectOptions = new Map<number, string[]>();
-
-function optionsFor(field: Field, telegramId: number): readonly string[] {
-    return field === 'subjects' ? (subjectOptions.get(telegramId) ?? []) : OPTIONS[field];
-}
 
 // Each searcher's current filters. Lost on restart, so they send /search again.
 const filters = new Map<number, SearchFilters>();
@@ -44,13 +37,11 @@ async function ignoreRapidRepeat(ctx: Context, key: string): Promise<boolean> {
 // Start from the searcher's own grades and area. Gender starts at Any.
 async function fromProfile(telegramId: number): Promise<SearchFilters> {
     const { rows } = await pool.query(
-        `SELECT "subCity", subjects, grades FROM "TelegramSubscriber" WHERE "telegramId" = $1`,
+        `SELECT "subCity", grades FROM "TelegramSubscriber" WHERE "telegramId" = $1`,
         [telegramId]
     );
     const me = rows[0];
-    subjectOptions.set(telegramId, me?.subjects ?? []);
     return {
-        subjects: me?.subjects ?? [],
         grades: me?.grades ?? [],
         areas: me?.subCity ? [me.subCity] : [],
         gender: null,
@@ -63,7 +54,6 @@ function menuText(): string {
 
 function menuKeyboard(f: SearchFilters) {
     return new InlineKeyboard()
-        .text(`Subjects: ${f.subjects.length || 'any'}`, 'sr:pick:subjects').row()
         .text(`Grades: ${f.grades.length || 'any'}`, 'sr:pick:grades').row()
         .text(`Areas: ${f.areas.length || 'any'}`, 'sr:pick:areas').row()
         .text(`Gender: ${f.gender ? (f.gender === 'MALE' ? 'Male' : 'Female') : 'any'}`, 'sr:gender').row()
@@ -107,7 +97,7 @@ export function registerSearchHandlers(bot: Bot) {
         return f;
     }
 
-    bot.callbackQuery(/^sr:pick:(subjects|grades|areas)$/, async (ctx) => {
+    bot.callbackQuery(/^sr:pick:(grades|areas)$/, async (ctx) => {
         const f = await current(ctx);
         if (!f) return;
         const field = ctx.match[1] as Field;
@@ -192,20 +182,8 @@ export function registerSearchHandlers(bot: Bot) {
               AND (cardinality($1::text[]) = 0 OR t."gradeLevels" && $1::text[])
               AND (cardinality($2::text[]) = 0 OR t."subCity" = ANY($2::text[]))
               AND ($3 IS NULL OR t."preferredTutorGender" IS NULL OR t."preferredTutorGender" = $3)
-              AND (
-                cardinality($4::text[]) = 0
-                OR cardinality(COALESCE(NULLIF(t.subjects, ARRAY[]::text[]),
-                  CASE WHEN t.subject IS NOT NULL AND btrim(t.subject) <> '' THEN ARRAY[t.subject]::text[] ELSE ARRAY[]::text[] END)) = 0
-                OR EXISTS (
-                  SELECT 1
-                  FROM unnest(COALESCE(NULLIF(t.subjects, ARRAY[]::text[]),
-                    CASE WHEN t.subject IS NOT NULL AND btrim(t.subject) <> '' THEN ARRAY[t.subject]::text[] ELSE ARRAY[]::text[] END)) offer_subject
-                  JOIN unnest($4::text[]) selected_subject
-                    ON lower(btrim(offer_subject)) = lower(btrim(selected_subject))
-                )
-              )
             ORDER BY t."postedAt" DESC
-        `, [f.grades, f.areas, f.gender, f.subjects]);
+        `, [f.grades, f.areas, f.gender]);
 
         const results = rows;
 

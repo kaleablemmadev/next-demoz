@@ -7,8 +7,6 @@ import { offerCardText, type CardOffer } from './card.js';
 
 export type AlertOffer = CardOffer & {
     id: string;
-    subject?: string | null;
-    subjects?: string[];
     status: 'OPEN' | 'CLOSED';
 };
 
@@ -27,16 +25,7 @@ async function alertableSubscribers(offer: AlertOffer): Promise<Subscriber[]> {
         SELECT s."telegramId"::text AS "telegramId"
         FROM "TelegramSubscriber" s
         WHERE s."subCity" = ANY($1::text[])
-          AND (
-            cardinality(COALESCE($2::text[], ARRAY[]::text[])) = 0
-            OR cardinality(s.subjects) = 0
-            OR EXISTS (
-              SELECT 1 FROM unnest(s.subjects) tutor_subject
-              JOIN unnest($2::text[]) offer_subject
-                ON lower(btrim(tutor_subject)) = lower(btrim(offer_subject))
-            )
-          )
-          AND cardinality($3::text[]) > 0
+          AND cardinality($2::text[]) > 0
           AND s.grades @> $3::text[]
           AND (s."minSalaryEtb" IS NULL OR s."minSalaryEtb" <= $4)
           AND ($5 IS NULL OR s.gender = $5)
@@ -52,11 +41,10 @@ async function alertableSubscribers(offer: AlertOffer): Promise<Subscriber[]> {
           )
           AND NOT EXISTS (
             SELECT 1 FROM "OfferDelivery" d
-            WHERE d."subscriberId" = s.id AND d."offerId" = $6
+            WHERE d."subscriberId" = s.id AND d."offerId" = $5
           )
     `, [
         areasNear(offer.subCity),
-        offer.subjects?.length ? offer.subjects : (offer.subject ? [offer.subject] : []),
         offer.gradeLevels,
         offer.monthlySalaryEtb,
         offer.preferredTutorGender,
