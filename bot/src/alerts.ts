@@ -14,6 +14,10 @@ type Subscriber = {
     telegramId: string;
 };
 
+// A small bounded fan-out improves delivery time without overwhelming Telegram
+// or creating an unbounded number of database/API requests.
+const DELIVERY_CONCURRENCY = 5;
+
 // Active subscribers who match this offer, haven't paused alerts, and haven't received it yet.
 // Keep filtering in SQL so Node.js only loads subscribers who can actually receive this alert.
 async function alertableSubscribers(offer: AlertOffer): Promise<Subscriber[]> {
@@ -54,26 +58,48 @@ async function alertableSubscribers(offer: AlertOffer): Promise<Subscriber[]> {
 export async function sendOfferAlerts(bot: Bot, offer: AlertOffer): Promise<number> {
     if (offer.status !== 'OPEN') return 0;
 
-    let sent = 0;
+    const subscribers = await alertableSubscribers(offer);
     const text = offerCardText(offer);
+    let nextIndex = 0;
+    let sent = 0;
 
-    for (const sub of await alertableSubscribers(offer)) {
-        try {
-            await bot.api.sendMessage(sub.telegramId, text);
-        } catch (err) {
-            // Usually means the tutor blocked the bot. Skip them and carry on.
-            console.error(`Could not message ${sub.telegramId}:`, err);
-            continue;
+    async function deliver(): Promise<void> {
+        while (true) {
+            const index = nextIndex++;
+            if (index >= subscribers.length) return;
+            const sub = subscribers[index];
+
+            try {
+                await bot.api.sendMessage(sub.telegramId, text);
+            } catch (err) {
+                // Usually means the tutor blocked the bot. Skip them and carry on.
+                console.error(`Could not message ${sub.telegramId}:`, err);
+                continue;
+            }
+
+            try {
+                await pool.query(
+                    `INSERT INTO "OfferDelivery" ("subscriberId", "offerId")
+                     SELECT id, $2 FROM "TelegramSubscriber" WHERE "telegramId" = $1
+                     ON CONFLICT DO NOTHING`,
+                    [sub.telegramId, offer.id]
+                );
+                sent++;
+            } catch (err) {
+                // A send succeeded but its receipt could not be persisted. Log explicitly:
+                // the next retry may resend this one message because Telegram and PostgreSQL
+                // cannot participate in one atomic transaction.
+                console.error(`Message sent to ${sub.telegramId}, but delivery receipt failed for offer ${offer.id}:`, err);
+            }
         }
-
-        await pool.query(
-            `INSERT INTO "OfferDelivery" ("subscriberId", "offerId")
-             SELECT id, $2 FROM "TelegramSubscriber" WHERE "telegramId" = $1
-                 ON CONFLICT DO NOTHING`,
-            [sub.telegramId, offer.id]
-        );
-        sent++;
     }
+
+    await Promise.all(
+        Array.from(
+            { length: Math.min(DELIVERY_CONCURRENCY, subscribers.length) },
+            () => deliver()
+        )
+    );
 
     return sent;
 }
