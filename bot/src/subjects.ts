@@ -13,7 +13,7 @@ const subjectSessions = new Map<number, SubjectSession>();
 
 export function parseTutorSubjects(input: string): string[] {
     const values = input
-        .split(/[,,;\n]/)
+        .split(/[,;\n]/)
         .map((value) => value.trim().replace(/\s+/g, ' '))
         .filter(Boolean);
 
@@ -34,12 +34,12 @@ export async function askSubjects(ctx: Context): Promise<void> {
     subjectSessions.set(ctx.from!.id, { startedAt: Date.now() });
 
     const currentLine = current.length
-        ? `\\n\\nCurrently saved: ${current.join(', ')}`
+        ? `\n\nCurrently saved: ${current.join(', ')}`
         : '';
 
     await ctx.reply(
-        'Which subjects do you teach? Type them in one message, separated by commas.\\n' +
-        'Example: Mathematics, Physics, Chemistry.\\n' +
+        'Which subjects do you teach? Type them in one message, separated by commas.\n' +
+        'Example: Mathematics, Physics, Chemistry.\n' +
         `You can enter up to ${MAX_SUBJECTS} subjects. Send /skip if you want to add them later.${currentLine}`
     );
 }
