@@ -51,7 +51,7 @@ export function clearSubjectSession(telegramId: number): void {
 export function registerSubjectHandlers(bot: Bot): void {
     // Restarting onboarding should never leave the user trapped in an old text step.
     bot.command('start', async (ctx, next) => {
-        subjectSessions.delete(ctx.from.id);
+        if (ctx.from) subjectSessions.delete(ctx.from.id);
         return next();
     });
 
@@ -97,8 +97,8 @@ export function registerSubjectHandlers(bot: Bot): void {
     });
 
     bot.command('skip', async (ctx, next) => {
-        const telegramId = ctx.from.id;
-        if (!subjectSessions.has(telegramId)) return next();
+        const telegramId = ctx.from?.id;
+        if (telegramId === undefined || !subjectSessions.has(telegramId)) return next();
 
         await pool.query(
             `UPDATE "TelegramSubscriber" SET subjects = ARRAY[]::text[] WHERE "telegramId" = $1`,
