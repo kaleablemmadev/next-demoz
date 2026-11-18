@@ -13,6 +13,8 @@ const MAX_POST_FAILURES = 5; // Must match reposts.ts
 // Fields /editagency can change, mapped to database columns.
 const FIELDS: Record<string, string> = {
     name: 'name',
+    header: 'postHeader',
+    footer: 'postFooter',
     group: 'groupChatId',
     channel: 'channelChatId',
     destination: 'postDestination',
@@ -111,7 +113,6 @@ async function offerCount(orgId: string): Promise<number> {
     return rows[0].n;
 }
 
-console.log('Showing agencies');
 async function listAgencies(ctx: Context) {
     const { rows } = await pool.query(`
         SELECT o.name, o."telegramUsername",
@@ -136,7 +137,6 @@ async function listAgencies(ctx: Context) {
     return ctx.reply(lines.join('\n\n'));
 }
 
-console.log('Showing agencies');
 async function showStats(ctx: Context) {
     const { rows } = await pool.query(`
         SELECT (SELECT count(*)::int FROM "TelegramSubscriber") AS tutors,
@@ -262,7 +262,7 @@ export function registerAdminHandlers(bot: Bot) {
                 return ctx.reply(
                     'Usage: /editagency username field value\n' +
                     `Fields: ${Object.keys(FIELDS).join(', ')}\n` +
-                    'Use "none" to clear group or channel.'
+                    'Use "none" to clear a field other than name or destination.'
                 );
             }
 
