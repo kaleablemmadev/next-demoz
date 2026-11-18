@@ -6,7 +6,7 @@ import { sendOfferAlerts, type AlertOffer } from './alerts.js';
 // Each offer is handled on its own, so one failure doesn't block the rest.
 export async function sendPendingAlerts(bot: Bot): Promise<void> {
     const { rows } = await pool.query<AlertOffer>(`
-        SELECT t.id, t.title, t."gradeLevels", t."subCity", t."locationDetail",
+        SELECT t.id, t.title, t.subject, t.subjects, t."gradeLevels", t."subCity", t."locationDetail",
                t."sessionsPerWeek", t."sessionHours", t."salaryUnit", t."salaryAmountEtb",
                t."monthlySalaryEtb", t."preferredTutorGender", t.requirements, t.status,
                o."postTemplate", o.name AS "agencyName",
