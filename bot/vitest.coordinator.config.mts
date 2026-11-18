@@ -3,7 +3,12 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
     test: {
         environment: 'node',
-        include: ['test/update-coordinator.test.ts', 'test/subjects.test.ts'],
+        include: [
+            'test/update-coordinator.test.ts',
+            'test/subjects.test.ts',
+            'test/agency-subjects.test.ts',
+            'test/search.test.ts',
+        ],
         testTimeout: 5000,
     },
 });
