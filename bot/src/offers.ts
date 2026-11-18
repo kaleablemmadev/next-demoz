@@ -2,7 +2,7 @@
 
 import { Bot, type Context } from 'grammy';
 import { pool } from './db.js';
-import { tutorMatchesOffer } from '../../shared/rules/offer-match.js';
+import { areasNear } from '../../shared/rules/nearby-areas.js';
 import { offerCardText, type CardOffer } from './card.js';
 
 export type OpenOffer = CardOffer & {
@@ -12,6 +12,7 @@ export type OpenOffer = CardOffer & {
 };
 
 // Every open offer this tutor fully matches: all grades, area, salary and gender.
+// Apply the matching rules in PostgreSQL so the bot does not download every open offer.
 export async function findMatchingOffers(telegramId: number): Promise<OpenOffer[]> {
     const me = await pool.query(
         `SELECT "subCity", grades, "minSalaryEtb", gender FROM "TelegramSubscriber" WHERE "telegramId" = $1`,
@@ -29,25 +30,20 @@ export async function findMatchingOffers(telegramId: number): Promise<OpenOffer[
         FROM "TutoringOffer" t
                  JOIN "Organization" o ON o.id = t."organizationId"
         WHERE t.status = 'OPEN'
+          AND t."subCity" = ANY($1::text[])
+          AND cardinality(t."gradeLevels") > 0
+          AND t."gradeLevels" <@ $2::text[]
+          AND ($3 IS NULL OR t."monthlySalaryEtb" >= $3)
+          AND (t."preferredTutorGender" IS NULL OR t."preferredTutorGender" = $4)
         ORDER BY t."postedAt" DESC
-    `);
+    `, [
+        areasNear(tutor.subCity),
+        tutor.grades ?? [],
+        tutor.minSalaryEtb,
+        tutor.gender,
+    ]);
 
-    return rows.filter((o) =>
-        tutorMatchesOffer(
-            {
-                subCity: tutor.subCity,
-                grades: tutor.grades,
-                minSalaryEtb: tutor.minSalaryEtb,
-                gender: tutor.gender,
-            },
-            {
-                subCity: o.subCity,
-                gradeLevels: o.gradeLevels,
-                monthlyEtb: o.monthlySalaryEtb,
-                preferredGender: o.preferredTutorGender,
-            }
-        )
-    );
+    return rows;
 }
 
 // The same card the alerts and group posts use, with the agency name added.
