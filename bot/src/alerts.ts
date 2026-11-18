@@ -26,9 +26,9 @@ async function alertableSubscribers(offer: AlertOffer): Promise<Subscriber[]> {
         FROM "TelegramSubscriber" s
         WHERE s."subCity" = ANY($1::text[])
           AND cardinality($2::text[]) > 0
-          AND s.grades @> $3::text[]
-          AND (s."minSalaryEtb" IS NULL OR s."minSalaryEtb" <= $4)
-          AND ($5 IS NULL OR s.gender = $5)
+          AND s.grades @> $2::text[]
+          AND (s."minSalaryEtb" IS NULL OR s."minSalaryEtb" <= $3)
+          AND ($4 IS NULL OR s.gender = $4)
           AND (
             s.status = 'ACTIVE'
             OR (s.status = 'PAUSED' AND s."pausedUntil" < now())

@@ -103,11 +103,11 @@ export function registerSearchHandlers(bot: Bot) {
         const field = ctx.match[1] as Field;
         await ctx.answerCallbackQuery();
         await ctx.editMessageText(`Choose ${LABEL[field].toLowerCase()}:`, {
-            reply_markup: pickKeyboard(field, f[field], optionsFor(field, ctx.from.id)),
+            reply_markup: pickKeyboard(field, f[field], OPTIONS[field]),
         });
     });
 
-    bot.callbackQuery(/^sr:toggle:(subjects|grades|areas):(.+)$/, async (ctx) => {
+    bot.callbackQuery(/^sr:toggle:(grades|areas):(.+)$/, async (ctx) => {
         const f = await current(ctx);
         if (!f) return;
         const field = ctx.match[1] as Field;
@@ -116,27 +116,27 @@ export function registerSearchHandlers(bot: Bot) {
         const list = f[field];
         f[field] = list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
         await ctx.answerCallbackQuery();
-        await ctx.editMessageReplyMarkup({ reply_markup: pickKeyboard(field, f[field], optionsFor(field, ctx.from.id)) });
+        await ctx.editMessageReplyMarkup({ reply_markup: pickKeyboard(field, f[field], OPTIONS[field]) });
     });
 
-    bot.callbackQuery(/^sr:all:(subjects|grades|areas)$/, async (ctx) => {
+    bot.callbackQuery(/^sr:all:(grades|areas)$/, async (ctx) => {
         const f = await current(ctx);
         if (!f) return;
         const field = ctx.match[1] as Field;
         if (await ignoreRapidRepeat(ctx, `all:${field}`)) return;
-        f[field] = [...optionsFor(field, ctx.from.id)];
+        f[field] = [...OPTIONS[field]];
         await ctx.answerCallbackQuery();
-        await ctx.editMessageReplyMarkup({ reply_markup: pickKeyboard(field, f[field], optionsFor(field, ctx.from.id)) });
+        await ctx.editMessageReplyMarkup({ reply_markup: pickKeyboard(field, f[field], OPTIONS[field]) });
     });
 
-    bot.callbackQuery(/^sr:clear:(subjects|grades|areas)$/, async (ctx) => {
+    bot.callbackQuery(/^sr:clear:(grades|areas)$/, async (ctx) => {
         const f = await current(ctx);
         if (!f) return;
         const field = ctx.match[1] as Field;
         if (await ignoreRapidRepeat(ctx, `clear:${field}`)) return;
         f[field] = [];
         await ctx.answerCallbackQuery();
-        await ctx.editMessageReplyMarkup({ reply_markup: pickKeyboard(field, f[field], optionsFor(field, ctx.from.id)) });
+        await ctx.editMessageReplyMarkup({ reply_markup: pickKeyboard(field, f[field], OPTIONS[field]) });
     });
 
     bot.callbackQuery('sr:menu', async (ctx) => {
