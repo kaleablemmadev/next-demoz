@@ -13,8 +13,9 @@ export type SearchableOffer = {
     preferredTutorGender: 'MALE' | 'FEMALE' | null;
 };
 
-// Matches if the offer has at least one selected grade, is in a selected area,
-// and fits the gender filter. An offer with no gender preference fits any gender.
+// Subject and grade filters use any-overlap semantics. Missing offer subjects remain
+// discoverable for compatibility with older records. Empty filters mean any value.
+// An offer with no gender preference fits any gender.
 export function offerMatchesSearch(offer: SearchableOffer, f: SearchFilters): boolean {
     const subjectOk = f.subjects.length === 0 || offer.subjects.length === 0 || offer.subjects.some((s) => f.subjects.some((selected) => selected.trim().toLocaleLowerCase() === s.trim().toLocaleLowerCase()));
     const gradeOk = f.grades.length === 0 || offer.gradeLevels.some((g) => f.grades.includes(g));
