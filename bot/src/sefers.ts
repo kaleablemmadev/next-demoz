@@ -101,17 +101,19 @@ async function tellProposer(api: Api, telegramId: string | null, text: string) {
     }
 }
 
-// Approved sefers that can be nearby. Order: current neighbours, same sub-city, bordering sub-cities, then the rest.
+// Nearby candidates: only sefers in the sefer's own sub-city or a bordering sub-city.
+// Sefers already linked stay visible (so they can be unticked), even if they are further away.
 async function loadCandidates(subCity: string, exceptId: string | null, currentIds: string[]): Promise<Candidate[]> {
     const { rows } = await pool.query<Candidate>(
         `SELECT id, name, "subCity" FROM "Sefer"
          WHERE status = 'APPROVED' AND id IS DISTINCT FROM $1`,
         [exceptId]
     );
-    const neighbours = new Set<string>(getDirectNeighbours(subCity));
+    const allowed = new Set<string>([subCity, ...getDirectNeighbours(subCity)]);
     const rank = (c: Candidate) =>
-        currentIds.includes(c.id) ? 0 : c.subCity === subCity ? 1 : neighbours.has(c.subCity) ? 2 : 3;
+        currentIds.includes(c.id) ? 0 : c.subCity === subCity ? 1 : 2;
     return rows
+        .filter((c) => allowed.has(c.subCity) || currentIds.includes(c.id))
         .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
         .slice(0, 60);
 }

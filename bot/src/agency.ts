@@ -103,6 +103,25 @@ async function findAgency(telegramId: number, username: string | undefined) {
 }
 
 // Rounds a number to the nearest step, for example nearest 50 or nearest 5.
+// Accepts "2", "1.5", "1,5", "1:30", "1 30" and "1h30". Returns hours in quarter steps, or null when invalid.
+export function parseSessionHours(text: string): number | null {
+    const t = text.trim().toLowerCase().replace(/\s*h(ours?|rs?)?\s*$/, '');
+    let hours: number;
+    const clock = t.match(/^(\d{1,2})\s*[:h\s]\s*(\d{1,2})$/);
+    if (clock) {
+        const mins = Number(clock[2]);
+        if (mins >= 60) return null;
+        hours = Number(clock[1]) + mins / 60;
+    } else if (/^\d{1,2}([.,]\d{1,2})?$/.test(t)) {
+        hours = Number(t.replace(',', '.'));
+    } else {
+        return null;
+    }
+    if (hours < 1 || hours > 8) return null;
+    if (Math.round(hours * 4) !== hours * 4) return null;
+    return Math.round(hours * 100) / 100;
+}
+
 function roundTo(value: number, step: number): number {
     return Math.round(value / step) * step;
 }
@@ -258,7 +277,7 @@ async function ask(reply: Reply, d: Draft) {
                     : 'Monthly salary in ETB? Type a number, for example 2500.'
             );
         case 'hours':
-            return reply('How many hours is one session? Type a number, for example 2.');
+            return reply('How many hours is one session? Type a number such as 2, 1.5 or 1:30.');
         case 'gender':
             return reply('Preferred tutor gender?', {
                 reply_markup: choices('gen', [['Any', 'ANY'], ['Male', 'MALE'], ['Female', 'FEMALE']], d.id, 3),
@@ -943,9 +962,9 @@ export function registerAgencyHandlers(bot: Bot) {
         }
 
         if (d.step === 'hours') {
-            const hours = Number(text);
-            if (!Number.isInteger(hours) || hours < 1 || hours > 8) {
-                return ctx.reply('Please type a whole number of hours between 1 and 8.');
+            const hours = parseSessionHours(text);
+            if (hours === null) {
+                return ctx.reply('Please type hours between 1 and 8, for example 2, 1.5 or 1:30. Use quarter-hour steps only (0.25, 0.5, 0.75).');
             }
             d.sessionHours = hours;
             d.step = 'gender';
