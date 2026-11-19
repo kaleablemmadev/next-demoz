@@ -44,6 +44,8 @@ type Draft = {
     | 'grades'
     | 'subjects'
     | 'area'
+    | 'sefer'
+    | 'seferName'
     | 'location'
     | 'sessions'
     | 'unit'
@@ -63,6 +65,8 @@ type Draft = {
     sessionHours?: number;
     gender?: Gender;
     requirements?: string | null;
+    seferId?: string | null; // the offer's sefer, if one was picked
+    seferChoices?: { id: string; name: string }[]; // approved sefers in the chosen sub-city
     adminMode?: boolean; // admin offer sent to tutors only
     contact?: string | null; // admin offers: username tutors contact
 };
@@ -193,6 +197,15 @@ function templateFieldsOf(d: Draft): TemplateFields {
     };
 }
 
+// Approved sefers in a sub-city, in name order.
+async function approvedSefers(subCity: string): Promise<{ id: string; name: string }[]> {
+    const { rows } = await pool.query<{ id: string; name: string }>(
+        `SELECT id, name FROM "Sefer" WHERE "subCity" = $1 AND status = 'APPROVED' ORDER BY name`,
+        [subCity]
+    );
+    return rows;
+}
+
 // Admin offers ask for the contact username after the requirements, unless it is already set.
 function afterRequirements(d: Draft): Draft['step'] {
     return d.adminMode && !d.contact ? 'contact' : 'confirm';
@@ -252,6 +265,21 @@ async function ask(reply: Reply, d: Draft) {
                 'Optional: any other requirements for the tutor, for example experience or teaching style. Or tap Skip.',
                 { reply_markup: new InlineKeyboard().text('Skip', `ag:skip:${d.id}:requirements`) }
             );
+        case 'sefer': {
+            const kb = new InlineKeyboard();
+            (d.seferChoices ?? []).forEach((s, i) => kb.text(s.name, `ag:sef:${d.id}:${i}`).row());
+            kb.text('Not in the list: I will type it', `ag:sef:${d.id}:new`).row();
+            kb.text('Skip', `ag:sef:${d.id}:none`);
+            return reply(
+                `Which sefer in ${d.subCity}? Sefers help tutors nearby see this offer first. Pick one, or skip.`,
+                { reply_markup: kb }
+            );
+        }
+        case 'seferName':
+            return reply(
+                'Type the sefer name. You can use it on this offer straight away. ' +
+                'The admin reviews new sefers before they are used for sorting.'
+            );
         case 'contact':
             return reply('Which Telegram username should tutors contact? Type it with the @, for example @my_name.');
         case 'confirm':
@@ -290,7 +318,7 @@ async function saveOfferEdit(api: Api, d: Draft): Promise<boolean> {
                 title = $2, "gradeLevel" = $3, "gradeLevels" = $4, "subject" = $5, subjects = $6,
                 "subCity" = $7, "locationDetail" = $8, "monthlySalaryEtb" = $9, "salaryUnit" = $10,
                 "salaryAmountEtb" = $11, "sessionHours" = $12, "sessionsPerWeek" = $13,
-                "preferredTutorGender" = $14, requirements = $15
+                "preferredTutorGender" = $14, requirements = $15, "seferId" = $16
             WHERE id = $1 AND status = 'OPEN'
             RETURNING id, "organizationId"
          )
@@ -316,6 +344,7 @@ async function saveOfferEdit(api: Api, d: Draft): Promise<boolean> {
             d.sessionsPerWeek,
             d.gender ?? null,
             d.requirements ?? null,
+            d.seferId ?? null,
         ]
     );
     if (!rowCount) return false;
@@ -485,7 +514,13 @@ export function registerAgencyHandlers(bot: Bot) {
 
         if (field === 'area') {
             d.subCity = value;
-            d.step = 'location';
+            if (d.adminMode) {
+                d.step = 'location';
+            } else {
+                d.seferChoices = await approvedSefers(value);
+                d.seferId = null;
+                d.step = 'sefer';
+            }
         } else if (field === 'sess') {
             d.sessionsPerWeek = Number(value);
             d.step = 'unit';
@@ -495,6 +530,32 @@ export function registerAgencyHandlers(bot: Bot) {
         } else if (field === 'gen') {
             d.gender = value === 'ANY' ? null : (value as 'MALE' | 'FEMALE');
             d.step = 'requirements';
+        }
+
+        await ctx.answerCallbackQuery();
+        await ask(replyTo(ctx), d);
+    });
+
+    // Sefer choice: an approved sefer by index, a new one to type, or skip.
+    bot.callbackQuery(/^ag:sef:([^:]+):(\d+|new|none)$/, async (ctx) => {
+        const d = drafts.get(ctx.from.id);
+        if (!d) {
+            await ctx.answerCallbackQuery();
+            return ctx.reply('Send /new to start a new offer.');
+        }
+        const [, sessionId, choice] = ctx.match as RegExpMatchArray;
+        if (sessionId !== d.id || d.step !== 'sefer') { await ctx.answerCallbackQuery({ text: 'This step has expired.' }); return; }
+
+        if (choice === 'new') {
+            d.step = 'seferName';
+        } else if (choice === 'none') {
+            d.seferId = null;
+            d.step = 'location';
+        } else {
+            const picked = d.seferChoices?.[Number(choice)];
+            if (!picked) { await ctx.answerCallbackQuery({ text: 'That choice has expired.' }); return; }
+            d.seferId = picked.id;
+            d.step = 'location';
         }
 
         await ctx.answerCallbackQuery();
@@ -562,8 +623,8 @@ export function registerAgencyHandlers(bot: Bot) {
                      ("organizationId", "title", "gradeLevel", "gradeLevels", "subject", "subjects",
                       "subCity", "locationDetail", "monthlySalaryEtb", "salaryUnit",
                       "salaryAmountEtb", "sessionHours", "sessionsPerWeek",
-                      "preferredTutorGender", "requirements", "status")
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'OPEN')
+                      "preferredTutorGender", "requirements", "seferId", "status")
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'OPEN')
                      RETURNING id, "organizationId"
                  )
                  INSERT INTO "AuditEvent"
@@ -588,6 +649,7 @@ export function registerAgencyHandlers(bot: Bot) {
                     d.sessionsPerWeek,
                     d.gender ?? null,
                     d.requirements ?? null,
+                    d.seferId ?? null,
                 ]
             );
         } catch (err) {
@@ -618,7 +680,7 @@ export function registerAgencyHandlers(bot: Bot) {
         const { rows } = await pool.query(
             `SELECT t.id, t.title, t.status, t."gradeLevels", t.subjects, t."subCity", t."locationDetail",
                     t."sessionsPerWeek", t."sessionHours", t."salaryUnit", t."salaryAmountEtb",
-                    t."preferredTutorGender", t.requirements,
+                    t."preferredTutorGender", t.requirements, t."seferId",
                     o.id AS "orgId", o.name AS "orgName", o."telegramUsername" AS "orgUsername",
                     o."postTemplate"
              FROM "TutoringOffer" t
@@ -653,6 +715,7 @@ export function registerAgencyHandlers(bot: Bot) {
             sessionHours: row.sessionHours == null ? undefined : Number(row.sessionHours),
             gender: (row.preferredTutorGender ?? null) as Gender,
             requirements: row.requirements ?? null,
+            seferId: row.seferId ?? null,
         };
 
         try {
@@ -863,6 +926,29 @@ export function registerAgencyHandlers(bot: Bot) {
             }
             d.sessionHours = hours;
             d.step = 'gender';
+            return ask(replyTo(ctx), d);
+        }
+
+        if (d.step === 'seferName') {
+            const name = text.replace(/\s+/g, ' ').slice(0, 40);
+            if (name.length < 2) return ctx.reply('Please type a name with at least 2 characters.');
+            // If the name already exists (approved or waiting), use that sefer.
+            const { rows: existing } = await pool.query<{ id: string }>(
+                `SELECT id FROM "Sefer" WHERE lower(name) = lower($1)`,
+                [name]
+            );
+            if (existing[0]) {
+                d.seferId = existing[0].id;
+            } else {
+                const { rows: created } = await pool.query<{ id: string }>(
+                    `INSERT INTO "Sefer" (name, "subCity", status, "proposedByTelegramId")
+                     VALUES ($1, $2, 'PENDING', $3) RETURNING id`,
+                    [name, d.subCity, ctx.from.id]
+                );
+                d.seferId = created[0].id;
+                await ctx.reply(`"${name}" was sent to the admin for review.`);
+            }
+            d.step = 'location';
             return ask(replyTo(ctx), d);
         }
 

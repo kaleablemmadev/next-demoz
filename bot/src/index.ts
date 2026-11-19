@@ -19,6 +19,7 @@ import { registerPaymentHandlers } from './payments.js';
 import { registerMenuHandlers } from './menu.js';
 import { registerParentHandlers } from './parent.js';
 import { registerAdminHandlers } from './admin.js';
+import { registerSeferHandlers } from './sefers.js';
 import { registerSignupHandlers } from './signup.js';
 import { registerRoleHandlers } from './roles.js';
 import { registerLeaveHandlers } from './leave.js';
@@ -117,6 +118,7 @@ registerSubjectHandlers(bot);
 bot.on('callback_query:data', (ctx, next) => { console.log('Button pressed:', ctx.callbackQuery.data); return next(); });
 
 registerAdminHandlers(bot);
+registerSeferHandlers(bot);
 registerAgencyLifecycle(bot);
 registerSignupHandlers(bot);
 registerGradeHandlers(bot);
