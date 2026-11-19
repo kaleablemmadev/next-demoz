@@ -37,6 +37,13 @@ export const ADMIN_COMMANDS = [
     { command: 'auditlogs', description: 'Recent account lifecycle audit events' },
     { command: 'stats', description: 'Counts for tutors, businesses, parents and offers' },
     { command: 'parents', description: 'Parent contacts and their requests' },
+    { command: 'sendoffer', description: 'Send an offer straight to matching tutors' },
+    { command: 'directoffers', description: 'Open offers you sent to tutors' },
+    { command: 'sefers', description: 'Manage sefers and review proposals' },
+    { command: 'paid', description: 'Confirm a payment from a parent' },
+    { command: 'placed', description: 'Record a placement and commission' },
+    { command: 'subscribe', description: 'Set a business subscription' },
+    { command: 'summary', description: 'Today summary' },
     { command: 'help', description: 'List admin functions' },
 ];
 
@@ -57,6 +64,13 @@ export const ADMIN_HELP = [
     '/auditlogs - recent account lifecycle events (no personal identifiers)',
     '/stats - counts for tutors, businesses, parents and offers',
     '/parents - parent contacts and their latest requests',
+    '/sendoffer - send an offer straight to matching tutors (no group or channel post)',
+    '/directoffers - open offers you sent to tutors, with Close buttons',
+    '/sefers - add, rename, move and set nearby sefers; review agency proposals',
+    '/paid - list requests waiting for payment; /paid request-id confirms payment',
+    '/placed request-id first-salary commission-percent - record a placement',
+    '/subscribe @owner normal|premium - set a business subscription',
+    '/summary - today summary',
     '/admin - show the admin menu',
     '/help - show this list',
 ].join('\n');
@@ -227,8 +241,21 @@ export async function showAdminMenu(ctx: Context) {
             .text('Businesses', 'adm:agencies')
             .text('Stats', 'adm:stats')
             .row()
+            .text('Send offer', 'adm:menu')
+            .text('Open offers', 'adm:open')
+            .row()
+            .text('Templates', 'adm:list')
+            .text('Sefers', 'sf:menu')
+            .row()
             .text('Paused offers', 'adm:paused')
             .text('Parents', 'adm:parents')
+            .row()
+            .text('Leave requests', 'adm:leaves')
+            .text('Feedback', 'adm:feedbacks')
+            .row()
+            .text('Audit log', 'adm:audit')
+            .text('Summary', 'adm:summary')
+            .row()
             .text('Help', 'adm:help'),
     });
 }

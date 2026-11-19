@@ -142,12 +142,12 @@ export async function showAgencyMenu(ctx: Context) {
         );
     }
     await setChatCommands(ctx, AGENCY_COMMANDS);
-    return ctx.reply('Agency menu\n\n/new - create a tutoring offer\n/myoffers - manage your open offers\n/template - edit your reusable post template\n/supply - see tutor counts by grade\n/cancel - cancel the current form\n/leave - request to leave NextTutor\n/help - list agency functions');
+    return ctx.reply('Agency menu\n\n/new - create a tutoring offer\n/myoffers - manage your open offers\n/template - edit your reusable post template\n/supply - see tutor counts by grade\n/cancel - cancel the current form\n/feedback - send feedback to NextTutor\n/leave - request to leave NextTutor\n/help - list agency functions');
 }
 
 export async function showParentMenu(ctx: Context) {
     await setChatCommands(ctx, PARENT_COMMANDS);
-    return ctx.reply('Parent menu\n\n/post - request a tutor for your child\n/myrequests - see the status of your requests\n/cancel - cancel the current request form\n/help - parent help');
+    return ctx.reply('Parent menu\n\n/post - request a tutor for your child\n/myrequests - see the status of your requests\n/cancel - cancel the current request form\n/feedback - send feedback to NextTutor\n/leave - delete your parent account\n/help - parent help');
 }
 
 export async function showRolePicker(ctx: Context, source = 'direct') {

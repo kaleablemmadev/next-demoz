@@ -10,6 +10,9 @@ const MENU_TEXT =
     'NextTutor menu\n\n' +
     '/search - find open offers by grade, area and gender\n' +
     '/settings - pause, resume or stop offer alerts\n' +
+    '/gender - change your gender\n' +
+    '/feedback - send feedback to NextTutor\n' +
+    '/leave - delete your NextTutor account\n' +
     '/help - what each function does\n' +
     '/reset - erase all your data and start again\n\n' +
     'Tap a button below, or type a command.';
@@ -21,12 +24,19 @@ const HELP_TEXT =
     '/search - Search open offers. Pick grades, areas and gender, then tap Show offers. Multi-select works, and All selects every option.\n' +
     '/settings - Pause, resume or stop offer alerts.\n' +
     '/gender - Change your gender. This affects which offers match you.\n' +
+    '/feedback - Send feedback to the NextTutor team.\n' +
+    '/leave - Delete your NextTutor account and personal data.\n' +
     '/reset - Erase all your data, including grades, area, gender, settings and sent offers. Then you can register again.\n' +
     '/help - Show this list.\n\n' +
     'You get an alert when a new offer matches you, and a list of matching offers every Monday morning.';
 
 function menuKeyboard() {
-    return new InlineKeyboard().text('🗑 Reset my data', 'menu:reset').row().text('❓ Help', 'menu:help');
+    return new InlineKeyboard()
+        .text('🔎 Search offers', 'menu:search')
+        .text('⚙️ Settings', 'menu:settings')
+        .row()
+        .text('🗑 Reset my data', 'menu:reset')
+        .text('❓ Help', 'menu:help');
 }
 
 function resetQuestion() {

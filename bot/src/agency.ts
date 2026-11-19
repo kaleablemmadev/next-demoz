@@ -1024,6 +1024,15 @@ async function showOpenDirectOffers(reply: Reply) {
 function registerDirectOfferHandlers(bot: Bot) {
     const adminOnly = 'This is for the NextTutor admin only.';
 
+    bot.callbackQuery('adm:menu', async (ctx) => {
+        if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
+        await ctx.answerCallbackQuery();
+        return ctx.reply(
+            'Send an offer straight to matching tutors. It is not posted in any group or channel.\n\nStart a new offer, or use a saved template.',
+            { reply_markup: directMenu() }
+        );
+    });
+
     bot.command('sendoffer', async (ctx) => {
         if (!isAdmin(ctx)) return ctx.reply(adminOnly);
         if (ctx.chat?.type !== 'private') return ctx.reply('Use /sendoffer in a private chat with the bot.');

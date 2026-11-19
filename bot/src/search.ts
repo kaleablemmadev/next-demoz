@@ -80,6 +80,13 @@ function pickKeyboard(field: Field, selected: string[], options: readonly string
 }
 
 export function registerSearchHandlers(bot: Bot) {
+    bot.callbackQuery('menu:search', async (ctx) => {
+        await ctx.answerCallbackQuery();
+        const f = await fromProfile(ctx.from.id);
+        filters.set(ctx.from.id, f);
+        await showMenu(ctx, f, false);
+    });
+
     bot.command('search', async (ctx) => {
         const f = await fromProfile(ctx.from!.id);
         filters.set(ctx.from!.id, f);

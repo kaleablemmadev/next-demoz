@@ -72,6 +72,12 @@ export function startAdminSummary(bot: Bot) {
 }
 
 export function registerSummaryCommand(bot: Bot) {
+    bot.callbackQuery('adm:summary', async (ctx) => {
+        if (ctx.from?.username !== ADMIN_USERNAME) return ctx.answerCallbackQuery({ text: 'Admins only.', show_alert: true });
+        await ctx.answerCallbackQuery();
+        await ctx.reply(await buildSummary());
+    });
+
     bot.command('summary', async (ctx, next) => {
         if (ctx.from?.username !== ADMIN_USERNAME) return next();
         await ctx.reply(await buildSummary());

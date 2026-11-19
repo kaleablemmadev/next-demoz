@@ -128,6 +128,12 @@ async function setNearby(id: string, names: string[]): Promise<{ saved: boolean;
 }
 
 export function registerSeferHandlers(bot: Bot) {
+    bot.callbackQuery('sf:menu', async (ctx) => {
+        if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
+        await ctx.answerCallbackQuery();
+        return sendMenu((text, other) => ctx.reply(text, other));
+    });
+
     bot.command('sefers', async (ctx) => {
         if (!isAdmin(ctx)) return ctx.reply(adminOnly);
         if (ctx.chat?.type !== 'private') return ctx.reply('Use /sefers in a private chat with the bot.');

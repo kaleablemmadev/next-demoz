@@ -226,6 +226,9 @@ export function registerLeaveHandlers(bot: Bot) {
     bot.command('leaverequests', adminOnly(listLeaveRequests));
     bot.command('feedbacks', adminOnly(listFeedback));
     bot.command('auditlogs', adminOnly(listAuditEvents));
+    bot.callbackQuery('adm:leaves', adminCallback(async (ctx) => { await ctx.answerCallbackQuery(); return listLeaveRequests(ctx); }));
+    bot.callbackQuery('adm:feedbacks', adminCallback(async (ctx) => { await ctx.answerCallbackQuery(); return listFeedback(ctx); }));
+    bot.callbackQuery('adm:audit', adminCallback(async (ctx) => { await ctx.answerCallbackQuery(); return listAuditEvents(ctx); }));
 
     // Agency leave reason
     bot.callbackQuery(/^leave:reason:(.+)$/, async (ctx) => {

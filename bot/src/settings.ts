@@ -53,6 +53,11 @@ async function showSettings(ctx: Context, telegramId: number) {
 export function registerSettingsHandlers(bot: Bot) {
     bot.command('settings', (ctx) => showSettings(ctx, ctx.from!.id));
 
+    bot.callbackQuery('menu:settings', async (ctx) => {
+        await ctx.answerCallbackQuery();
+        return showSettings(ctx, ctx.from.id);
+    });
+
     bot.callbackQuery(/^set:(alerts:on|alerts:off|pause|resume|stop)$/, async (ctx) => {
         const telegramId = ctx.from.id;
         const sub = await findSubscriber(telegramId);
