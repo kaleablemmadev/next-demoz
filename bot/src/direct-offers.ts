@@ -22,7 +22,7 @@ export type TemplateFields = {
     contact: string;
 };
 
-export type DirectOfferInput = TemplateFields & { title: string; monthlySalaryEtb: number };
+export type DirectOfferInput = TemplateFields & { title: string; monthlySalaryEtb: number; postTemplate: string | null };
 
 export async function insertDirectOffer(o: DirectOfferInput): Promise<string> {
     const { rows } = await pool.query<{ id: string }>(
@@ -31,8 +31,8 @@ export async function insertDirectOffer(o: DirectOfferInput): Promise<string> {
              ("organizationId", "title", "gradeLevel", "gradeLevels", "subject", "subjects",
               "subCity", "locationDetail", "monthlySalaryEtb", "salaryUnit",
               "salaryAmountEtb", "sessionHours", "sessionsPerWeek",
-              "preferredTutorGender", "requirements", "contactUsername", "status")
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'OPEN')
+              "preferredTutorGender", "requirements", "contactUsername", "postTemplate", "status")
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'OPEN')
              RETURNING id, "organizationId"
          ), audited AS (
             INSERT INTO "AuditEvent"
@@ -59,17 +59,27 @@ export async function insertDirectOffer(o: DirectOfferInput): Promise<string> {
             o.gender,
             o.requirements,
             o.contact,
+            o.postTemplate,
         ]
     );
     return rows[0].id;
 }
 
-// Throws with code 23505 if the name is already used (names are compared without case).
-export async function saveTemplate(name: string, fields: TemplateFields): Promise<void> {
+// A template is a named layout: the post text with placeholders. Throws with code 23505 if the name is used.
+export async function saveTemplate(name: string, layout: string): Promise<void> {
     await pool.query(
-        `INSERT INTO "AdminOfferTemplate" (name, fields) VALUES ($1::text, $2::jsonb)`,
-        [name, JSON.stringify(fields)]
+        `INSERT INTO "AdminOfferTemplate" (name, fields) VALUES ($1::text, jsonb_build_object('layout', $2::text))`,
+        [name, layout]
     );
+}
+
+export async function updateTemplateLayout(id: string, layout: string): Promise<boolean> {
+    const { rowCount } = await pool.query(
+        `UPDATE "AdminOfferTemplate" SET fields = jsonb_build_object('layout', $2::text), "updatedAt" = now()
+         WHERE id = $1`,
+        [id, layout]
+    );
+    return (rowCount ?? 0) > 0;
 }
 
 export async function listTemplates(): Promise<{ id: string; name: string }[]> {
@@ -79,9 +89,9 @@ export async function listTemplates(): Promise<{ id: string; name: string }[]> {
     return rows;
 }
 
-export async function getTemplate(id: string): Promise<{ name: string; fields: TemplateFields } | null> {
-    const { rows } = await pool.query<{ name: string; fields: TemplateFields }>(
-        `SELECT name, fields FROM "AdminOfferTemplate" WHERE id = $1`,
+export async function getTemplate(id: string): Promise<{ name: string; layout: string } | null> {
+    const { rows } = await pool.query<{ name: string; layout: string }>(
+        `SELECT name, fields->>'layout' AS layout FROM "AdminOfferTemplate" WHERE id = $1`,
         [id]
     );
     return rows[0] ?? null;

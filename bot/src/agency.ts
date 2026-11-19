@@ -15,6 +15,7 @@ import {
     listOpenDirectOffers,
     listTemplates,
     saveTemplate,
+    updateTemplateLayout,
     type TemplateFields,
 } from './direct-offers.js';
 
@@ -68,7 +69,6 @@ type Draft = {
     seferId?: string | null; // the offer's sefer, if one was picked
     seferChoices?: { id: string; name: string }[]; // approved sefers in the chosen sub-city
     adminMode?: boolean; // admin offer sent to tutors only
-    templateOnly?: boolean; // admin is creating a template; nothing is sent
     contact?: string | null; // admin offers: username tutors contact
 };
 
@@ -77,13 +77,15 @@ const WEEKS_PER_MONTH = 4.33;
 // In-memory drafts. If the bot restarts mid-form, the agency sends /new again.
 const drafts = new Map<number, Draft>();
 const templateDrafts = new Map<number, string>();
-const templateNameDrafts = new Map<number, string>(); // admin: waiting for a template name, value is the draft id
+// Admin: a layout template being created (name first) or edited.
+type LayoutStep = { kind: 'new'; name?: string } | { kind: 'edit'; id: string };
+const templateLayoutDrafts = new Map<number, LayoutStep>();
 const lastAgencyGradeTap = new Map<number, { key: string; at: number }>();
 
 export function clearAgencySession(telegramId: number) {
     drafts.delete(telegramId);
     templateDrafts.delete(telegramId);
-    templateNameDrafts.delete(telegramId);
+    templateLayoutDrafts.delete(telegramId);
     lastAgencyGradeTap.delete(telegramId);
 }
 
@@ -284,18 +286,6 @@ async function ask(reply: Reply, d: Draft) {
         case 'contact':
             return reply('Which Telegram username should tutors contact? Type it with the @, for example @my_name.');
         case 'confirm':
-            if (d.templateOnly) {
-                return reply(
-                    `Check the template. It is saved under a name you choose and is not sent to anyone.\n\n${offerLines(d).join('\n')}`,
-                    {
-                        reply_markup: new InlineKeyboard()
-                            .text('Save template', `adm:tpl:${d.id}`)
-                            .text('Edit', `ag:post:edit:${d.id}`)
-                            .row()
-                            .text('Cancel', `ag:post:no:${d.id}`),
-                    }
-                );
-            }
             if (d.adminMode) {
                 return reply(
                     `Please check the offer. It goes to matching tutors only and is not posted in any group or channel:\n\n${offerLines(d).join('\n')}`,
@@ -304,7 +294,6 @@ async function ask(reply: Reply, d: Draft) {
                             .text('Send to tutors', `adm:send:${d.id}`)
                             .text('Edit', `ag:post:edit:${d.id}`)
                             .row()
-                            .text('Save as template', `adm:tpl:${d.id}`)
                             .text('Cancel', `ag:post:no:${d.id}`),
                     }
                 );
@@ -445,7 +434,7 @@ export function registerAgencyHandlers(bot: Bot) {
     bot.command('cancel', async (ctx, next) => {
         const hadOffer = drafts.delete(ctx.from!.id);
         const hadTemplate = templateDrafts.delete(ctx.from!.id);
-        const hadName = templateNameDrafts.delete(ctx.from!.id);
+        const hadName = templateLayoutDrafts.delete(ctx.from!.id);
         if (!hadOffer && !hadTemplate && !hadName) return next();
         return ctx.reply('Cancelled. No changes were saved.');
     });
@@ -819,31 +808,48 @@ export function registerAgencyHandlers(bot: Bot) {
     bot.on('message:text', async (ctx, next) => {
         const text = ctx.message.text.trim();
 
-        // Admin: the name for a template being saved.
-        if (templateNameDrafts.has(ctx.from.id)) {
+        // Admin: a layout template being created or edited. The layout is checked like an agency /template.
+        const layoutStep = templateLayoutDrafts.get(ctx.from.id);
+        if (layoutStep) {
             if (text.startsWith('/')) return next();
-            const d = drafts.get(ctx.from.id);
-            if (!d || d.id !== templateNameDrafts.get(ctx.from.id)) {
-                templateNameDrafts.delete(ctx.from.id);
-                return ctx.reply('This offer has expired. Send /sendoffer to start again.');
+
+            if (layoutStep.kind === 'new' && !layoutStep.name) {
+                const name = text.replace(/\s+/g, ' ').slice(0, 40);
+                if (name.length < 2) return ctx.reply('Please type a name with at least 2 characters.');
+                const { rows } = await pool.query(`SELECT 1 FROM "AdminOfferTemplate" WHERE lower(name) = lower($1)`, [name]);
+                if (rows[0]) return ctx.reply('A template with this name already exists. Type a different name.');
+                templateLayoutDrafts.set(ctx.from.id, { kind: 'new', name });
+                return ctx.reply(`Now send the layout for "${name}". Use these placeholders:\n\n${placeholderList()}`);
             }
-            const name = text.replace(/\s+/g, ' ').slice(0, 40);
-            if (name.length < 2) return ctx.reply('Please type a name with at least 2 characters.');
-            try {
-                await saveTemplate(name, templateFieldsOf(d));
-            } catch (err) {
-                if ((err as { code?: string }).code === '23505') {
-                    return ctx.reply('A template with this name already exists. Type a different name.');
+
+            if (text.length > 3500) return ctx.reply('Please keep the layout under 3,500 characters.');
+            const unknown = validateOfferTemplate(text);
+            if (unknown.length > 0) {
+                return ctx.reply(
+                    `Unknown placeholder(s): ${unknown.map((x) => `{${x}}`).join(', ')}\n\n` +
+                    'Use only the placeholders listed.'
+                );
+            }
+            if (!/\{[^{}]+\}/.test(text)) {
+                return ctx.reply('The layout must contain at least one placeholder, such as {GRADES}.');
+            }
+
+            if (layoutStep.kind === 'new') {
+                try {
+                    await saveTemplate(layoutStep.name!, text);
+                } catch (err) {
+                    if ((err as { code?: string }).code === '23505') {
+                        return ctx.reply('A template with this name already exists. Send /sendoffer to start again.');
+                    }
+                    throw err;
                 }
-                throw err;
+            } else {
+                await updateTemplateLayout(layoutStep.id, text);
             }
-            templateNameDrafts.delete(ctx.from.id);
-            await ctx.reply(`Saved as template "${name}". You can use it next time from /sendoffer.`);
-            if (d.templateOnly) {
-                drafts.delete(ctx.from.id);
-                return ctx.reply('What next?', { reply_markup: directMenu() });
-            }
-            return ask(replyTo(ctx), d);
+
+            templateLayoutDrafts.delete(ctx.from.id);
+            await ctx.reply(`Preview with sample values:\n\n${offerCardText(sampleOffer(text), 'OPEN')}`);
+            return ctx.reply('Template saved. Use it from /sendoffer.', { reply_markup: directMenu() });
         }
 
         // Save a complete custom offer template.
@@ -1023,10 +1029,41 @@ function directMenu() {
 
 async function showTemplateList(reply: Reply) {
     const templates = await listTemplates();
-    if (templates.length === 0) return reply('No saved templates yet. Save one from the preview of an offer with "Save as template".');
+    if (templates.length === 0) return reply('No saved templates yet. Use "New template" to create one.');
     const kb = new InlineKeyboard();
-    for (const t of templates) kb.text(`Delete "${t.name}"`, `adm:del:${t.id}`).row();
-    return reply('Saved templates. Tap one to delete it. Offers already sent are not changed.', { reply_markup: kb });
+    for (const t of templates) {
+        kb.text(`Edit layout: ${t.name}`, `adm:tedit:${t.id}`).row();
+        kb.text(`Delete: ${t.name}`, `adm:del:${t.id}`).row();
+    }
+    return reply('Saved templates. Edit a layout or delete a template. Offers already sent are not changed.', { reply_markup: kb });
+}
+
+function placeholderList(): string {
+    return Object.entries(OFFER_PLACEHOLDERS)
+        .map(([key, description]) => `{${key}} - ${description}`)
+        .join('\n');
+}
+
+// Sample offer used to preview a layout.
+function sampleOffer(layout: string): CardOffer {
+    return {
+        title: 'Tutor (Grade 1-6)',
+        gradeLevels: ['Grade 1', 'Grade 2', 'Grade 3'],
+        subject: 'Maths',
+        subjects: ['Maths', 'English'],
+        subCity: 'Bole',
+        locationDetail: 'Near the main road',
+        sessionsPerWeek: 3,
+        sessionHours: 2,
+        salaryUnit: 'MONTH',
+        salaryAmountEtb: 3000,
+        monthlySalaryEtb: 3000,
+        preferredTutorGender: null,
+        requirements: 'Experience with young learners',
+        postTemplate: layout,
+        agencyUsername: 'your_username',
+        agencyName: 'NextTutor',
+    };
 }
 
 async function showOpenDirectOffers(reply: Reply) {
@@ -1075,14 +1112,24 @@ function registerDirectOfferHandlers(bot: Bot) {
         await ask(replyTo(ctx), draft);
     });
 
-    // The admin writes a template on its own. The form runs as usual, but nothing is sent.
+    // A template is a named layout. Its name is typed first, then its layout.
     bot.callbackQuery('adm:newtpl', async (ctx) => {
         if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
+        templateLayoutDrafts.set(ctx.from.id, { kind: 'new' });
         await ctx.answerCallbackQuery();
-        const draft = { ...newDirectDraft(ctx.chat?.id ?? ctx.from.id), templateOnly: true };
-        drafts.set(ctx.from.id, draft);
-        await ctx.reply('Fill in the template the same way as an offer. Nothing is sent to tutors.');
-        await ask(replyTo(ctx), draft);
+        return ctx.reply('Type a name for the new template, for example "Bole grades 1-6 maths". Send /cancel to stop.');
+    });
+
+    bot.callbackQuery(/^adm:tedit:([^:]+)$/, async (ctx) => {
+        if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
+        const tpl = await getTemplate((ctx.match as RegExpMatchArray)[1]);
+        if (!tpl) return ctx.answerCallbackQuery({ text: 'This template no longer exists.', show_alert: true });
+        templateLayoutDrafts.set(ctx.from.id, { kind: 'edit', id: (ctx.match as RegExpMatchArray)[1] });
+        await ctx.answerCallbackQuery();
+        return ctx.reply(
+            `Send the new layout for "${tpl.name}". Current layout:\n\n${tpl.layout}\n\n` +
+            `Placeholders:\n${placeholderList()}\n\nSend /cancel to stop.`
+        );
     });
 
     bot.callbackQuery('adm:pick', async (ctx) => {
@@ -1102,22 +1149,7 @@ function registerDirectOfferHandlers(bot: Bot) {
         const tpl = await getTemplate((ctx.match as RegExpMatchArray)[1]);
         if (!tpl) return ctx.answerCallbackQuery({ text: 'This template no longer exists.', show_alert: true });
         await ctx.answerCallbackQuery({ text: `Using "${tpl.name}".` });
-        const f = tpl.fields;
-        const draft: Draft = {
-            ...newDirectDraft(ctx.chat?.id ?? ctx.from.id),
-            step: 'confirm',
-            grades: f.grades,
-            subjects: f.subjects,
-            subCity: f.subCity,
-            locationDetail: f.locationDetail,
-            sessionsPerWeek: f.sessionsPerWeek,
-            unit: f.unit,
-            amount: f.amount,
-            sessionHours: f.sessionHours,
-            gender: f.gender,
-            requirements: f.requirements,
-            contact: f.contact,
-        };
+        const draft: Draft = { ...newDirectDraft(ctx.chat?.id ?? ctx.from.id), postTemplate: tpl.layout };
         drafts.set(ctx.from.id, draft);
         await ask(replyTo(ctx), draft);
     });
@@ -1148,21 +1180,6 @@ function registerDirectOfferHandlers(bot: Bot) {
         return ctx.editMessageText(closed ? 'Closed.' : 'This offer was already closed.');
     });
 
-    bot.callbackQuery(/^adm:tpl:([^:]+)$/, async (ctx) => {
-        if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
-        const d = drafts.get(ctx.from.id);
-        const sessionId = (ctx.match as RegExpMatchArray)[1];
-        if (!d || !d.adminMode || sessionId !== d.id || d.step !== 'confirm') {
-            return ctx.answerCallbackQuery({ text: 'This confirmation has expired.' });
-        }
-        templateNameDrafts.set(ctx.from.id, d.id);
-        await ctx.answerCallbackQuery();
-        return ctx.reply(
-            'Type a name for this template, for example "Bole grades 1-6 maths". ' +
-            'Send /cancel to stop without saving.'
-        );
-    });
-
     bot.callbackQuery(/^adm:send:([^:]+)$/, async (ctx) => {
         if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
         const d = drafts.get(ctx.from.id);
@@ -1174,7 +1191,7 @@ function registerDirectOfferHandlers(bot: Bot) {
         drafts.delete(ctx.from.id);
         try {
             const title = `Tutor (${listLabel(d.grades, GRADES, 'All Grades', 'Any grade')})`;
-            await insertDirectOffer({ ...templateFieldsOf(d), title, monthlySalaryEtb: monthlyOf(d) });
+            await insertDirectOffer({ ...templateFieldsOf(d), title, monthlySalaryEtb: monthlyOf(d), postTemplate: d.postTemplate ?? null });
         } catch (err) {
             drafts.set(ctx.from.id, d);
             throw err;

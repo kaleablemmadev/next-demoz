@@ -23,6 +23,7 @@ export const DEFAULT_OFFER_TEMPLATE = `📢 NEW TUTORING OPPORTUNITY!
 Share this opportunity!`;
 
 export const OFFER_PLACEHOLDERS = {
+    SUBJECT: 'Subject or subjects',
     GRADES: 'Selected grades',
     SUB_CITY: 'Sub-city',
     LOCATION: 'Specific location',
