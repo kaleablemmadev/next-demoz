@@ -1,13 +1,12 @@
 // src/leave.ts
 
-import { Bot, InlineKeyboard, type Context } from 'grammy';
+import { Bot, InlineKeyboard, type Api, type Context } from 'grammy';
 import { pool } from './db.js';
 import { logLeft } from './agency-lifecycle.js';
-import { findAgencyByUsername, findAgencyForUser } from './roles.js';
+import { findAgencyForUser } from './roles.js';
 import { startPersonalDeparture, registerPersonalDepartureCallbacks } from './account-departure.js';
 import { recordAuditEvent, withTransaction } from './audit.js';
 import { isAdmin } from './admin.js';
-import { removeOfferEverywhere } from './reposts.js';
 import { clearAgencySession } from './agency.js';
 
 const ADMIN_TELEGRAM_ID = Number(process.env.ADMIN_TELEGRAM_ID ?? 0);
@@ -53,6 +52,29 @@ export function tutorLeaveKeyboard() {
     return buttons('leftreason', TUTOR_REASONS).text('Skip', 'leftreason:skip');
 }
 
+type PostRefs = {
+    groupChatId: string | null;
+    groupMessageId: string | null;
+    channelChatId: string | null;
+    channelMessageId: string | null;
+};
+
+// Deletes an offer's public posts. Takes the IDs read before the offers were deleted.
+async function deletePostMessages(api: Api, offer: PostRefs) {
+    const places = [
+        { chat: offer.groupChatId, message: offer.groupMessageId },
+        { chat: offer.channelChatId, message: offer.channelMessageId },
+    ];
+    for (const place of places) {
+        if (!place.chat || !place.message) continue;
+        try {
+            await api.deleteMessage(Number(place.chat), Number(place.message));
+        } catch (err) {
+            console.error(`Could not remove an offer post from chat ${place.chat} after leave approval:`, err);
+        }
+    }
+}
+
 async function notifyAdmin(ctx: Context, text: string, keyboard?: InlineKeyboard) {
     if (!ADMIN_TELEGRAM_ID) {
         console.error('ADMIN_TELEGRAM_ID is not set, so the admin was not told:', text);
@@ -70,11 +92,19 @@ async function createLeaveRequest(ctx: Context, reason: string, note: string | n
     if (!agency) return ctx.reply('Only registered tutoring businesses can request to leave.');
 
     const { rows } = await pool.query(
-        `INSERT INTO "LeaveRequest" ("organizationId", "reasonCode", "reasonText") VALUES ($1, $2, $3) RETURNING id`,
+        `INSERT INTO "LeaveRequest" ("organizationId", "reasonCode", "reasonText")
+         SELECT $1::text, $2::text, $3::text
+         WHERE NOT EXISTS (
+             SELECT 1 FROM "LeaveRequest" WHERE "organizationId" = $1::text AND status = 'PENDING'
+         )
+         RETURNING id`,
         [agency.id, reason, note]
     );
-    const requestId = rows[0].id;
     pending.delete(ctx.from!.id);
+    if (rows.length === 0) {
+        return ctx.reply('You already have a leave request waiting for approval.');
+    }
+    const requestId = rows[0].id;
 
     await notifyAdmin(
         ctx,
@@ -248,15 +278,13 @@ export function registerLeaveHandlers(bot: Bot) {
                 return ctx.editMessageText('This request was already handled.');
             }
 
-            const { rows: offers } = await pool.query(
-                `SELECT id, status FROM "TutoringOffer" WHERE "organizationId" = $1`,
+            // Read the post IDs now; the posts are deleted only after the approval is committed.
+            const { rows: offers } = await pool.query<PostRefs & { id: string; status: string }>(
+                `SELECT id, status, "groupChatId", "groupMessageId", "channelChatId", "channelMessageId"
+                 FROM "TutoringOffer" WHERE "organizationId" = $1`,
                 [req.organizationId]
             );
-            const openOfferCount = offers.filter((offer: { status: string }) => offer.status === 'OPEN').length;
-            // Remove every stored public post (open or previously closed) before deleting offer rows.
-            for (const offer of offers) {
-                await removeOfferEverywhere(ctx.api, offer.id);
-            }
+            const openOfferCount = offers.filter((offer) => offer.status === 'OPEN').length;
 
             const departure = await withTransaction(async (client) => {
                 const { rows: lockedRequests } = await client.query(
@@ -289,6 +317,11 @@ export function registerLeaveHandlers(bot: Bot) {
                     [requestId],
                 );
 
+                await client.query(
+                    `DELETE FROM "OfferDelivery"
+                     WHERE "offerId" IN (SELECT id FROM "TutoringOffer" WHERE "organizationId" = $1)`,
+                    [req.organizationId],
+                );
                 await client.query(
                     `DELETE FROM "TutoringOffer" WHERE "organizationId" = $1`,
                     [req.organizationId],
@@ -350,6 +383,11 @@ export function registerLeaveHandlers(bot: Bot) {
             if (!departure.handled) {
                 await ctx.answerCallbackQuery({ text: 'This request was already handled.', show_alert: true });
                 return ctx.editMessageText('This request was already handled.');
+            }
+
+            // The approval is committed, so now remove the public posts.
+            for (const offer of offers) {
+                await deletePostMessages(ctx.api, offer);
             }
 
             // Keep the history of a retained agency: log the departure once the change is committed.
@@ -466,7 +504,7 @@ export function registerLeaveHandlers(bot: Bot) {
         }
 
         if (p.kind === 'feedback') {
-            const agency = await findAgencyByUsername(ctx.from.username);
+            const agency = await findAgencyForUser(ctx.from.id, ctx.from.username);
             await pool.query(
                 `INSERT INTO "Feedback" ("fromTelegramId", "fromUsername", role, category, message)
                  VALUES ($1, $2, $3, $4, $5)`,
