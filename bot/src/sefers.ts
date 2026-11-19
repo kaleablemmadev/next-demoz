@@ -7,7 +7,9 @@ import { isAdmin } from './admin.js';
 import { KNOWN_SUB_CITIES } from '../../shared/rules/nearby-areas.js';
 
 type Pending =
-    | { kind: 'name'; subCity: string }
+    | { kind: 'addName' }
+    | { kind: 'addCity'; name: string }
+    | { kind: 'addNearby'; name: string; subCity: string }
     | { kind: 'rename'; id: string }
     | { kind: 'nearby'; id: string };
 
@@ -90,22 +92,23 @@ async function tellProposer(api: Api, telegramId: string | null, text: string) {
     }
 }
 
-// Replaces the nearby sefers of one sefer, keeping both directions in step.
-async function setNearby(id: string, names: string[]): Promise<{ saved: boolean; unknown: string[] }> {
-    const wanted = names.map((n) => n.trim()).filter(Boolean);
-    const unknown: string[] = [];
+// Turns typed sefer names into approved sefer IDs. Returns the names that were not found.
+async function resolveNearby(names: string[], exceptId: string | null): Promise<{ ids: string[]; unknown: string[] }> {
     const ids: string[] = [];
-
-    for (const name of wanted) {
+    const unknown: string[] = [];
+    for (const name of names.map((n) => n.trim()).filter(Boolean)) {
         const { rows } = await pool.query<{ id: string }>(
-            `SELECT id FROM "Sefer" WHERE lower(name) = lower($1) AND status = 'APPROVED' AND id <> $2`,
-            [name, id]
+            `SELECT id FROM "Sefer" WHERE lower(name) = lower($1) AND status = 'APPROVED' AND id IS DISTINCT FROM $2`,
+            [name, exceptId]
         );
         if (rows[0]) ids.push(rows[0].id);
         else unknown.push(name);
     }
-    if (unknown.length > 0) return { saved: false, unknown };
+    return { ids, unknown };
+}
 
+// Replaces the nearby sefers of one sefer, keeping both directions in step.
+async function writeNearby(id: string, ids: string[]) {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -124,6 +127,12 @@ async function setNearby(id: string, names: string[]): Promise<{ saved: boolean;
     } finally {
         client.release();
     }
+}
+
+async function setNearby(id: string, names: string[]): Promise<{ saved: boolean; unknown: string[] }> {
+    const resolved = await resolveNearby(names, id);
+    if (resolved.unknown.length > 0) return { saved: false, unknown: resolved.unknown };
+    await writeNearby(id, resolved.ids);
     return { saved: true, unknown: [] };
 }
 
@@ -142,8 +151,9 @@ export function registerSeferHandlers(bot: Bot) {
 
     bot.callbackQuery('sf:add', async (ctx) => {
         if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
+        pending.set(ctx.from.id, { kind: 'addName' });
         await ctx.answerCallbackQuery();
-        return showSubCities((text, other) => ctx.reply(text, other)).then(() => undefined);
+        return ctx.reply('Type the sefer name. Send /cancel to stop.');
     });
 
     bot.callbackQuery('sf:browse', async (ctx) => {
@@ -165,17 +175,24 @@ export function registerSeferHandlers(bot: Bot) {
         );
         const kb = new InlineKeyboard();
         for (const s of rows) kb.text(s.name, `sf:view:${s.id}`).row();
-        kb.text('+ Add a sefer in ' + city, `sf:new:${KNOWN_SUB_CITIES.indexOf(city as never)}`);
+        kb.text('+ Add a sefer', 'sf:add');
         return ctx.reply(`${city}: ${rows.length} approved sefer(s).`, { reply_markup: kb });
     });
 
-    bot.callbackQuery(/^sf:new:(\d+)$/, async (ctx) => {
+    // Add flow, step 2: the sub-city of the new sefer.
+    bot.callbackQuery(/^sf:addcity:(\d+)$/, async (ctx) => {
         if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
+        const p = pending.get(ctx.from.id);
         const city = KNOWN_SUB_CITIES[Number((ctx.match as RegExpMatchArray)[1])];
-        if (!city) return ctx.answerCallbackQuery({ text: 'Unknown sub-city.', show_alert: true });
-        pending.set(ctx.from.id, { kind: 'name', subCity: city });
+        if (!p || p.kind !== 'addCity' || !city) {
+            return ctx.answerCallbackQuery({ text: 'This step has expired. Send /sefers to start again.', show_alert: true });
+        }
+        pending.set(ctx.from.id, { kind: 'addNearby', name: p.name, subCity: city });
         await ctx.answerCallbackQuery();
-        return ctx.reply(`Type the sefer name for ${city}. Send /cancel to stop.`);
+        return ctx.reply(
+            `Which sefers are nearby ${p.name} in ${city}? Type their names separated by commas, ` +
+            'for example "Bethel, Megenagna". Type "none" if there are none. Send /cancel to stop.'
+        );
     });
 
     bot.callbackQuery(/^sf:view:([^:]+)$/, async (ctx) => {
@@ -290,18 +307,56 @@ export function registerSeferHandlers(bot: Bot) {
             return next();
         }
 
-        if (p.kind === 'name' || p.kind === 'rename') {
+        if (p.kind === 'addName') {
+            const name = text.replace(/\s+/g, ' ').slice(0, 40);
+            if (name.length < 2) return ctx.reply('Please type a name with at least 2 characters.');
+            const { rows } = await pool.query(`SELECT 1 FROM "Sefer" WHERE lower(name) = lower($1)`, [name]);
+            if (rows[0]) return ctx.reply('A sefer with this name already exists. Type a different name.');
+            pending.set(ctx.from.id, { kind: 'addCity', name });
+            const kb = new InlineKeyboard();
+            KNOWN_SUB_CITIES.forEach((city, i) => kb.text(city, `sf:addcity:${i}`).row());
+            return ctx.reply(`Which sub-city is ${name} in?`, { reply_markup: kb });
+        }
+
+        if (p.kind === 'addCity') {
+            return ctx.reply('Tap the sub-city above, or send /cancel to stop.');
+        }
+
+        if (p.kind === 'addNearby') {
+            const names = text.toLowerCase() === 'none' ? [] : text.split(',');
+            const resolved = await resolveNearby(names, null);
+            if (resolved.unknown.length > 0) {
+                return ctx.reply(
+                    `These are not approved sefers: ${resolved.unknown.join(', ')}. Check the names and type them again.`
+                );
+            }
+            let id: string;
+            try {
+                const { rows } = await pool.query<{ id: string }>(
+                    `INSERT INTO "Sefer" (name, "subCity", status) VALUES ($1, $2, 'APPROVED') RETURNING id`,
+                    [p.name, p.subCity]
+                );
+                id = rows[0].id;
+            } catch (err) {
+                if ((err as { code?: string }).code === '23505') {
+                    pending.delete(ctx.from.id);
+                    return ctx.reply('A sefer with this name already exists. Send /sefers to start again.');
+                }
+                throw err;
+            }
+            await writeNearby(id, resolved.ids);
+            pending.delete(ctx.from.id);
+            const nearbyText = resolved.ids.length
+                ? ` with ${resolved.ids.length} nearby sefer(s)`
+                : ' with no nearby sefers';
+            return ctx.reply(`Saved: ${p.name} in ${p.subCity}${nearbyText}.`);
+        }
+
+        if (p.kind === 'rename') {
             const name = text.replace(/\s+/g, ' ').slice(0, 40);
             if (name.length < 2) return ctx.reply('Please type a name with at least 2 characters.');
             try {
-                if (p.kind === 'name') {
-                    await pool.query(
-                        `INSERT INTO "Sefer" (name, "subCity", status) VALUES ($1, $2, 'APPROVED')`,
-                        [name, p.subCity]
-                    );
-                } else {
-                    await pool.query(`UPDATE "Sefer" SET name = $2 WHERE id = $1`, [p.id, name]);
-                }
+                await pool.query(`UPDATE "Sefer" SET name = $2 WHERE id = $1`, [p.id, name]);
             } catch (err) {
                 if ((err as { code?: string }).code === '23505') {
                     return ctx.reply('A sefer with this name already exists. Type a different name.');
@@ -312,7 +367,7 @@ export function registerSeferHandlers(bot: Bot) {
             return ctx.reply(`Saved: ${name}.`);
         }
 
-        // Nearby sefers
+        // Editing nearby sefers of an existing sefer
         const names = text.toLowerCase() === 'none' ? [] : text.split(',');
         const result = await setNearby(p.id, names);
         if (!result.saved) {
