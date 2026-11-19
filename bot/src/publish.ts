@@ -10,7 +10,7 @@ export async function sendPendingAlerts(bot: Bot): Promise<void> {
                t."sessionsPerWeek", t."sessionHours", t."salaryUnit", t."salaryAmountEtb",
                t."monthlySalaryEtb", t."preferredTutorGender", t.requirements, t.status,
                o."postTemplate", o.name AS "agencyName",
-                o."telegramUsername" AS "agencyUsername"
+                COALESCE(t."contactUsername", o."telegramUsername") AS "agencyUsername"
                 FROM "TutoringOffer" t
                  JOIN "Organization" o ON o.id = t."organizationId"
         WHERE t."alertedAt" IS NULL AND t.status = 'OPEN'

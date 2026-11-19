@@ -5,6 +5,18 @@ import { randomUUID } from 'node:crypto';
 import { pool } from './db.js';
 import { notifyUpdatedOffer } from './alerts.js';
 import { offerButtons, refreshOfferPosts, setRepostStopped } from './reposts.js';
+import { isAdmin } from './admin.js';
+import {
+    DIRECT_ORG_ID,
+    closeDirectOffer,
+    deleteTemplate,
+    getTemplate,
+    insertDirectOffer,
+    listOpenDirectOffers,
+    listTemplates,
+    saveTemplate,
+    type TemplateFields,
+} from './direct-offers.js';
 
 import { KNOWN_SUB_CITIES } from '../../shared/rules/nearby-areas.js';
 import { GRADES } from './curriculum.js';
@@ -39,6 +51,7 @@ type Draft = {
     | 'hours'
     | 'gender'
     | 'requirements'
+    | 'contact'
     | 'confirm';
     grades: string[];
     subjects: string[];
@@ -50,6 +63,8 @@ type Draft = {
     sessionHours?: number;
     gender?: Gender;
     requirements?: string | null;
+    adminMode?: boolean; // admin offer sent to tutors only
+    contact?: string | null; // admin offers: username tutors contact
 };
 
 const WEEKS_PER_MONTH = 4.33;
@@ -57,11 +72,13 @@ const WEEKS_PER_MONTH = 4.33;
 // In-memory drafts. If the bot restarts mid-form, the agency sends /new again.
 const drafts = new Map<number, Draft>();
 const templateDrafts = new Map<number, string>();
+const templateNameDrafts = new Map<number, string>(); // admin: waiting for a template name, value is the draft id
 const lastAgencyGradeTap = new Map<number, { key: string; at: number }>();
 
 export function clearAgencySession(telegramId: number) {
     drafts.delete(telegramId);
     templateDrafts.delete(telegramId);
+    templateNameDrafts.delete(telegramId);
     lastAgencyGradeTap.delete(telegramId);
 }
 
@@ -152,11 +169,33 @@ function offerLines(d: Draft): string[] {
         preferredTutorGender: d.gender ?? null,
         requirements: d.requirements ?? null,
         postTemplate: d.postTemplate,
-        agencyUsername: d.orgUsername,
+        agencyUsername: d.adminMode ? (d.contact ?? '') : d.orgUsername,
         agencyName: d.orgName,
     };
 
     return offerCardText(offer, 'OPEN').split('\n');
+}
+
+// The reusable part of an offer, as stored in an admin template.
+function templateFieldsOf(d: Draft): TemplateFields {
+    return {
+        grades: d.grades,
+        subjects: d.subjects,
+        subCity: d.subCity ?? '',
+        locationDetail: d.locationDetail ?? null,
+        sessionsPerWeek: d.sessionsPerWeek ?? 0,
+        unit: d.unit ?? 'MONTH',
+        amount: d.amount ?? 0,
+        sessionHours: d.sessionHours ?? 0,
+        gender: d.gender ?? null,
+        requirements: d.requirements ?? null,
+        contact: d.contact ?? '',
+    };
+}
+
+// Admin offers ask for the contact username after the requirements, unless it is already set.
+function afterRequirements(d: Draft): Draft['step'] {
+    return d.adminMode && !d.contact ? 'contact' : 'confirm';
 }
 
 // Sends a form question. Forms in group buttons send their questions to the agency's private chat.
@@ -213,7 +252,22 @@ async function ask(reply: Reply, d: Draft) {
                 'Optional: any other requirements for the tutor, for example experience or teaching style. Or tap Skip.',
                 { reply_markup: new InlineKeyboard().text('Skip', `ag:skip:${d.id}:requirements`) }
             );
+        case 'contact':
+            return reply('Which Telegram username should tutors contact? Type it with the @, for example @my_name.');
         case 'confirm':
+            if (d.adminMode) {
+                return reply(
+                    `Please check the offer. It goes to matching tutors only and is not posted in any group or channel:\n\n${offerLines(d).join('\n')}`,
+                    {
+                        reply_markup: new InlineKeyboard()
+                            .text('Send to tutors', `adm:send:${d.id}`)
+                            .text('Edit', `ag:post:edit:${d.id}`)
+                            .row()
+                            .text('Save as template', `adm:tpl:${d.id}`)
+                            .text('Cancel', `ag:post:no:${d.id}`),
+                    }
+                );
+            }
             return reply(`Please check the offer:\n\n${offerLines(d).join('\n')}`, {
                 reply_markup: new InlineKeyboard()
                     .text(d.editOfferId ? 'Save changes' : 'Post offer', `ag:post:yes:${d.id}`)
@@ -318,6 +372,8 @@ async function ownedOpenOffer(offerId: string, telegramId: number): Promise<Mana
 }
 
 export function registerAgencyHandlers(bot: Bot) {
+    registerDirectOfferHandlers(bot);
+
     bot.command('template', async (ctx) => {
         const agency = await findAgency(ctx.from!.id, ctx.from?.username);
 
@@ -347,7 +403,8 @@ export function registerAgencyHandlers(bot: Bot) {
     bot.command('cancel', async (ctx, next) => {
         const hadOffer = drafts.delete(ctx.from!.id);
         const hadTemplate = templateDrafts.delete(ctx.from!.id);
-        if (!hadOffer && !hadTemplate) return next();
+        const hadName = templateNameDrafts.delete(ctx.from!.id);
+        if (!hadOffer && !hadTemplate && !hadName) return next();
         return ctx.reply('Cancelled. No changes were saved.');
     });
 
@@ -461,7 +518,7 @@ export function registerAgencyHandlers(bot: Bot) {
             d.step = 'sessions';
         } else {
             d.requirements = null;
-            d.step = 'confirm';
+            d.step = afterRequirements(d);
         }
 
         await ctx.answerCallbackQuery();
@@ -686,6 +743,29 @@ export function registerAgencyHandlers(bot: Bot) {
     bot.on('message:text', async (ctx, next) => {
         const text = ctx.message.text.trim();
 
+        // Admin: the name for a template being saved.
+        if (templateNameDrafts.has(ctx.from.id)) {
+            if (text.startsWith('/')) return next();
+            const d = drafts.get(ctx.from.id);
+            if (!d || d.id !== templateNameDrafts.get(ctx.from.id)) {
+                templateNameDrafts.delete(ctx.from.id);
+                return ctx.reply('This offer has expired. Send /sendoffer to start again.');
+            }
+            const name = text.replace(/\s+/g, ' ').slice(0, 40);
+            if (name.length < 2) return ctx.reply('Please type a name with at least 2 characters.');
+            try {
+                await saveTemplate(name, templateFieldsOf(d));
+            } catch (err) {
+                if ((err as { code?: string }).code === '23505') {
+                    return ctx.reply('A template with this name already exists. Type a different name.');
+                }
+                throw err;
+            }
+            templateNameDrafts.delete(ctx.from.id);
+            await ctx.reply(`Saved as template "${name}". You can use it next time from /sendoffer.`);
+            return ask(replyTo(ctx), d);
+        }
+
         // Save a complete custom offer template.
         if (templateDrafts.has(ctx.from.id)) {
             if (text === '/cancel') {
@@ -786,12 +866,199 @@ export function registerAgencyHandlers(bot: Bot) {
             return ask(replyTo(ctx), d);
         }
 
-        if (d.step === 'requirements') {
-            d.requirements = text.slice(0, 500) || null;
+        if (d.step === 'contact') {
+            const username = text.replace(/^@/, '');
+            if (!/^[A-Za-z][A-Za-z0-9_]{4,31}$/.test(username)) {
+                return ctx.reply('Please type a valid Telegram username, for example @my_name.');
+            }
+            d.contact = username;
             d.step = 'confirm';
             return ask(replyTo(ctx), d);
         }
 
+        if (d.step === 'requirements') {
+            d.requirements = text.slice(0, 500) || null;
+            d.step = afterRequirements(d);
+            return ask(replyTo(ctx), d);
+        }
+
         return next();
+    });
+}
+
+// ---- Admin offers sent straight to tutors, and named templates ----
+
+function newDirectDraft(chatId: number): Draft {
+    return {
+        id: randomUUID(),
+        chatId,
+        editOfferId: null,
+        adminMode: true,
+        contact: null,
+        orgId: DIRECT_ORG_ID,
+        orgName: 'NextTutor',
+        orgUsername: '',
+        postTemplate: null,
+        step: 'grades',
+        grades: [],
+        subjects: [],
+    };
+}
+
+function directMenu() {
+    return new InlineKeyboard()
+        .text('New offer', 'adm:new')
+        .row()
+        .text('Use a saved template', 'adm:pick')
+        .row()
+        .text('Manage templates', 'adm:list')
+        .row()
+        .text('Open offers', 'adm:open');
+}
+
+async function showTemplateList(reply: Reply) {
+    const templates = await listTemplates();
+    if (templates.length === 0) return reply('No saved templates yet. Save one from the preview of an offer with "Save as template".');
+    const kb = new InlineKeyboard();
+    for (const t of templates) kb.text(`Delete "${t.name}"`, `adm:del:${t.id}`).row();
+    return reply('Saved templates. Tap one to delete it. Offers already sent are not changed.', { reply_markup: kb });
+}
+
+async function showOpenDirectOffers(reply: Reply) {
+    const offers = await listOpenDirectOffers();
+    if (offers.length === 0) return reply('You have no open offers sent to tutors.');
+    for (const o of offers) {
+        const pay = `${Number(o.salaryAmountEtb).toLocaleString()} ETB ${o.salaryUnit === 'HOUR' ? 'per hour' : 'per month'}`;
+        await reply(`${o.title}\n${o.subCity} · ${pay}`, {
+            reply_markup: new InlineKeyboard().text('Close this offer', `adm:close:${o.id}`),
+        });
+    }
+}
+
+function registerDirectOfferHandlers(bot: Bot) {
+    const adminOnly = 'This is for the NextTutor admin only.';
+
+    bot.command('sendoffer', async (ctx) => {
+        if (!isAdmin(ctx)) return ctx.reply(adminOnly);
+        if (ctx.chat?.type !== 'private') return ctx.reply('Use /sendoffer in a private chat with the bot.');
+        return ctx.reply(
+            'Send an offer straight to matching tutors. It is not posted in any group or channel.\n\n' +
+            'Start a new offer, or use a saved template.',
+            { reply_markup: directMenu() }
+        );
+    });
+
+    bot.command('directoffers', async (ctx) => {
+        if (!isAdmin(ctx)) return ctx.reply(adminOnly);
+        return showOpenDirectOffers(replyTo(ctx));
+    });
+
+    bot.callbackQuery('adm:new', async (ctx) => {
+        if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
+        await ctx.answerCallbackQuery();
+        const draft = newDirectDraft(ctx.chat?.id ?? ctx.from.id);
+        drafts.set(ctx.from.id, draft);
+        await ask(replyTo(ctx), draft);
+    });
+
+    bot.callbackQuery('adm:pick', async (ctx) => {
+        if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
+        await ctx.answerCallbackQuery();
+        const templates = await listTemplates();
+        if (templates.length === 0) {
+            return ctx.reply('No saved templates yet. Save one from the preview of an offer with "Save as template".');
+        }
+        const kb = new InlineKeyboard();
+        for (const t of templates) kb.text(t.name, `adm:use:${t.id}`).row();
+        return ctx.reply('Which template?', { reply_markup: kb });
+    });
+
+    bot.callbackQuery(/^adm:use:([^:]+)$/, async (ctx) => {
+        if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
+        const tpl = await getTemplate((ctx.match as RegExpMatchArray)[1]);
+        if (!tpl) return ctx.answerCallbackQuery({ text: 'This template no longer exists.', show_alert: true });
+        await ctx.answerCallbackQuery({ text: `Using "${tpl.name}".` });
+        const f = tpl.fields;
+        const draft: Draft = {
+            ...newDirectDraft(ctx.chat?.id ?? ctx.from.id),
+            step: 'confirm',
+            grades: f.grades,
+            subjects: f.subjects,
+            subCity: f.subCity,
+            locationDetail: f.locationDetail,
+            sessionsPerWeek: f.sessionsPerWeek,
+            unit: f.unit,
+            amount: f.amount,
+            sessionHours: f.sessionHours,
+            gender: f.gender,
+            requirements: f.requirements,
+            contact: f.contact,
+        };
+        drafts.set(ctx.from.id, draft);
+        await ask(replyTo(ctx), draft);
+    });
+
+    bot.callbackQuery('adm:list', async (ctx) => {
+        if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
+        await ctx.answerCallbackQuery();
+        return showTemplateList(replyTo(ctx));
+    });
+
+    bot.callbackQuery(/^adm:del:([^:]+)$/, async (ctx) => {
+        if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
+        const name = await deleteTemplate((ctx.match as RegExpMatchArray)[1]);
+        await ctx.answerCallbackQuery();
+        return ctx.editMessageText(name ? `Deleted template "${name}".` : 'That template was already deleted.');
+    });
+
+    bot.callbackQuery('adm:open', async (ctx) => {
+        if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
+        await ctx.answerCallbackQuery();
+        return showOpenDirectOffers(replyTo(ctx));
+    });
+
+    bot.callbackQuery(/^adm:close:([^:]+)$/, async (ctx) => {
+        if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
+        const closed = await closeDirectOffer((ctx.match as RegExpMatchArray)[1]);
+        await ctx.answerCallbackQuery({ text: closed ? 'Closed.' : 'This offer is already closed.' });
+        return ctx.editMessageText(closed ? 'Closed.' : 'This offer was already closed.');
+    });
+
+    bot.callbackQuery(/^adm:tpl:([^:]+)$/, async (ctx) => {
+        if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
+        const d = drafts.get(ctx.from.id);
+        const sessionId = (ctx.match as RegExpMatchArray)[1];
+        if (!d || !d.adminMode || sessionId !== d.id || d.step !== 'confirm') {
+            return ctx.answerCallbackQuery({ text: 'This confirmation has expired.' });
+        }
+        templateNameDrafts.set(ctx.from.id, d.id);
+        await ctx.answerCallbackQuery();
+        return ctx.reply(
+            'Type a name for this template, for example "Bole grades 1-6 maths". ' +
+            'Send /cancel to stop without saving.'
+        );
+    });
+
+    bot.callbackQuery(/^adm:send:([^:]+)$/, async (ctx) => {
+        if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
+        const d = drafts.get(ctx.from.id);
+        const sessionId = (ctx.match as RegExpMatchArray)[1];
+        if (!d || !d.adminMode || sessionId !== d.id || d.step !== 'confirm') {
+            return ctx.answerCallbackQuery({ text: 'This confirmation has expired.' });
+        }
+        // Remove the draft first, so a second tap cannot send the same offer again.
+        drafts.delete(ctx.from.id);
+        try {
+            const title = `Tutor (${listLabel(d.grades, GRADES, 'All Grades', 'Any grade')})`;
+            await insertDirectOffer({ ...templateFieldsOf(d), title, monthlySalaryEtb: monthlyOf(d) });
+        } catch (err) {
+            drafts.set(ctx.from.id, d);
+            throw err;
+        }
+        await ctx.answerCallbackQuery();
+        return ctx.reply(
+            'Sent. Matching tutors will receive it within a few minutes. ' +
+            'It stays open until you close it with /directoffers.'
+        );
     });
 }
