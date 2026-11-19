@@ -68,6 +68,7 @@ type Draft = {
     seferId?: string | null; // the offer's sefer, if one was picked
     seferChoices?: { id: string; name: string }[]; // approved sefers in the chosen sub-city
     adminMode?: boolean; // admin offer sent to tutors only
+    templateOnly?: boolean; // admin is creating a template; nothing is sent
     contact?: string | null; // admin offers: username tutors contact
 };
 
@@ -283,6 +284,18 @@ async function ask(reply: Reply, d: Draft) {
         case 'contact':
             return reply('Which Telegram username should tutors contact? Type it with the @, for example @my_name.');
         case 'confirm':
+            if (d.templateOnly) {
+                return reply(
+                    `Check the template. It is saved under a name you choose and is not sent to anyone.\n\n${offerLines(d).join('\n')}`,
+                    {
+                        reply_markup: new InlineKeyboard()
+                            .text('Save template', `adm:tpl:${d.id}`)
+                            .text('Edit', `ag:post:edit:${d.id}`)
+                            .row()
+                            .text('Cancel', `ag:post:no:${d.id}`),
+                    }
+                );
+            }
             if (d.adminMode) {
                 return reply(
                     `Please check the offer. It goes to matching tutors only and is not posted in any group or channel:\n\n${offerLines(d).join('\n')}`,
@@ -826,6 +839,10 @@ export function registerAgencyHandlers(bot: Bot) {
             }
             templateNameDrafts.delete(ctx.from.id);
             await ctx.reply(`Saved as template "${name}". You can use it next time from /sendoffer.`);
+            if (d.templateOnly) {
+                drafts.delete(ctx.from.id);
+                return ctx.reply('What next?', { reply_markup: directMenu() });
+            }
             return ask(replyTo(ctx), d);
         }
 
@@ -997,6 +1014,8 @@ function directMenu() {
         .row()
         .text('Use a saved template', 'adm:pick')
         .row()
+        .text('New template', 'adm:newtpl')
+        .row()
         .text('Manage templates', 'adm:list')
         .row()
         .text('Open offers', 'adm:open');
@@ -1053,6 +1072,16 @@ function registerDirectOfferHandlers(bot: Bot) {
         await ctx.answerCallbackQuery();
         const draft = newDirectDraft(ctx.chat?.id ?? ctx.from.id);
         drafts.set(ctx.from.id, draft);
+        await ask(replyTo(ctx), draft);
+    });
+
+    // The admin writes a template on its own. The form runs as usual, but nothing is sent.
+    bot.callbackQuery('adm:newtpl', async (ctx) => {
+        if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
+        await ctx.answerCallbackQuery();
+        const draft = { ...newDirectDraft(ctx.chat?.id ?? ctx.from.id), templateOnly: true };
+        drafts.set(ctx.from.id, draft);
+        await ctx.reply('Fill in the template the same way as an offer. Nothing is sent to tutors.');
         await ask(replyTo(ctx), draft);
     });
 
