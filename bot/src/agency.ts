@@ -1,8 +1,10 @@
 // src/agency.ts
 
-import { Bot, InlineKeyboard, type Context } from 'grammy';
+import { Bot, InlineKeyboard, type Api, type Context } from 'grammy';
 import { randomUUID } from 'node:crypto';
 import { pool } from './db.js';
+import { notifyUpdatedOffer } from './alerts.js';
+import { offerButtons, refreshOfferPosts, setRepostStopped } from './reposts.js';
 
 import { KNOWN_SUB_CITIES } from '../../shared/rules/nearby-areas.js';
 import { GRADES } from './curriculum.js';
@@ -20,6 +22,8 @@ type Gender = 'MALE' | 'FEMALE' | null;
 
 type Draft = {
     id: string;
+    chatId: number; // where the form's questions are sent
+    editOfferId: string | null; // set when this form edits a posted offer
     orgId: string;
     orgName: string;
     orgUsername: string;
@@ -155,54 +159,162 @@ function offerLines(d: Draft): string[] {
     return offerCardText(offer, 'OPEN').split('\n');
 }
 
-async function ask(ctx: Context, d: Draft) {
+// Sends a form question. Forms in group buttons send their questions to the agency's private chat.
+type Reply = (text: string, other?: Parameters<Context['reply']>[1]) => Promise<unknown>;
+
+function replyTo(ctx: Context): Reply {
+    return (text, other) => ctx.reply(text, other);
+}
+
+function privateReply(api: Api, chatId: number): Reply {
+    return (text, other) => api.sendMessage(chatId, text, other as Parameters<Api['sendMessage']>[2]);
+}
+
+async function ask(reply: Reply, d: Draft) {
     switch (d.step) {
         case 'grades':
-            return ctx.reply('Which grades? Pick one or more, or tap All.', {
+            return reply('Which grades? Pick one or more, or tap All.', {
                 reply_markup: multiKeyboard('grd', GRADES, d.grades, d.id),
             });
         case 'subjects':
-            return ctx.reply(
+            return reply(
                 `Which subjects does this offer cover? Type up to ${MAX_SUBJECTS}, separated by commas.\nExample: Mathematics, Physics, Chemistry.`
             );
         case 'area':
-            return ctx.reply('Which sub-city?', {
+            return reply('Which sub-city?', {
                 reply_markup: choices('area', KNOWN_SUB_CITIES.map((c) => [c, c] as [string, string]), d.id, 3),
             });
         case 'location':
-            return ctx.reply('Optional: type a location detail, such as a nearby landmark. Or tap Skip.', {
+            return reply('Optional: type a location detail, such as a nearby landmark. Or tap Skip.', {
                 reply_markup: new InlineKeyboard().text('Skip', `ag:skip:${d.id}:location`),
             });
         case 'sessions':
-            return ctx.reply('Sessions per week?', {
+            return reply('Sessions per week?', {
                 reply_markup: choices('sess', [['2', '2'], ['3', '3'], ['4', '4'], ['5', '5']], d.id, 4),
             });
         case 'unit':
-            return ctx.reply('How is the pay set?', {
+            return reply('How is the pay set?', {
                 reply_markup: choices('unit', [['Monthly', 'MONTH'], ['Hourly', 'HOUR']], d.id, 2),
             });
         case 'amount':
-            return ctx.reply(
+            return reply(
                 d.unit === 'HOUR'
                     ? 'Hourly rate in ETB? Type a number, for example 300.'
                     : 'Monthly salary in ETB? Type a number, for example 2500.'
             );
         case 'hours':
-            return ctx.reply('How many hours is one session? Type a number, for example 2.');
+            return reply('How many hours is one session? Type a number, for example 2.');
         case 'gender':
-            return ctx.reply('Preferred tutor gender?', {
+            return reply('Preferred tutor gender?', {
                 reply_markup: choices('gen', [['Any', 'ANY'], ['Male', 'MALE'], ['Female', 'FEMALE']], d.id, 3),
             });
         case 'requirements':
-            return ctx.reply(
+            return reply(
                 'Optional: any other requirements for the tutor, for example experience or teaching style. Or tap Skip.',
                 { reply_markup: new InlineKeyboard().text('Skip', `ag:skip:${d.id}:requirements`) }
             );
         case 'confirm':
-            return ctx.reply(`Please check the offer:\n\n${offerLines(d).join('\n')}`, {
-                reply_markup: new InlineKeyboard().text('Post offer', `ag:post:yes:${d.id}`).text('Cancel', `ag:post:no:${d.id}`),
+            return reply(`Please check the offer:\n\n${offerLines(d).join('\n')}`, {
+                reply_markup: new InlineKeyboard()
+                    .text(d.editOfferId ? 'Save changes' : 'Post offer', `ag:post:yes:${d.id}`)
+                    .text('Edit', `ag:post:edit:${d.id}`)
+                    .row()
+                    .text('Cancel', `ag:post:no:${d.id}`),
             });
     }
+}
+
+// Saves an edited offer, then brings its posts and the tutors who received it up to date.
+// Returns false if the offer is no longer open, so nothing was changed.
+async function saveOfferEdit(api: Api, d: Draft): Promise<boolean> {
+    const offerId = d.editOfferId!;
+    const title = `Tutor (${listLabel(d.grades, GRADES, 'All Grades', 'Any grade')})`;
+
+    const { rowCount } = await pool.query(
+        `WITH updated_offer AS (
+            UPDATE "TutoringOffer" SET
+                title = $2, "gradeLevel" = $3, "gradeLevels" = $4, "subject" = $5, subjects = $6,
+                "subCity" = $7, "locationDetail" = $8, "monthlySalaryEtb" = $9, "salaryUnit" = $10,
+                "salaryAmountEtb" = $11, "sessionHours" = $12, "sessionsPerWeek" = $13,
+                "preferredTutorGender" = $14, requirements = $15
+            WHERE id = $1 AND status = 'OPEN'
+            RETURNING id, "organizationId"
+         )
+         INSERT INTO "AuditEvent"
+            ("actorRef", "actorType", action, "entityType", "entityRef", metadata)
+         SELECT o."auditRef", 'AGENCY', 'OFFER_UPDATED', 'TUTORING_OFFER',
+                updated_offer.id::uuid, '{}'::jsonb
+         FROM updated_offer
+         JOIN "Organization" o ON o.id = updated_offer."organizationId"`,
+        [
+            offerId,
+            title,
+            d.grades[0] ?? 'Not specified',
+            d.grades,
+            d.subjects[0] ?? null,
+            d.subjects,
+            d.subCity,
+            d.locationDetail ?? null,
+            monthlyOf(d),
+            d.unit,
+            d.amount,
+            d.sessionHours,
+            d.sessionsPerWeek,
+            d.gender ?? null,
+            d.requirements ?? null,
+        ]
+    );
+    if (!rowCount) return false;
+
+    const updated = await refreshOfferPosts(api, offerId);
+    if (updated) await notifyUpdatedOffer(api, updated);
+    return true;
+}
+
+type ManagedOffer = {
+    id: string;
+    title: string;
+    subCity: string;
+    salaryUnit: Unit;
+    salaryAmountEtb: number;
+    repostEveryDays: number;
+    repostStopped: boolean;
+};
+
+const REPOST_CHOICES = [1, 2, 3, 5, 7];
+
+function manageText(o: ManagedOffer): string {
+    const pay = o.salaryUnit === 'HOUR' ? 'per hour' : 'per month';
+    const repost = o.repostStopped
+        ? 'Reposting paused'
+        : `Reposted every ${o.repostEveryDays} day${o.repostEveryDays === 1 ? '' : 's'}`;
+    return `${o.title}\n${o.subCity} · ${Number(o.salaryAmountEtb).toLocaleString()} ETB ${pay}\n${repost}`;
+}
+
+function manageKeyboard(o: ManagedOffer): InlineKeyboard {
+    const keyboard = new InlineKeyboard();
+    for (const days of REPOST_CHOICES) {
+        keyboard.text(`${days === o.repostEveryDays ? '✅ ' : ''}${days}d`, `rp:d:${o.id}:${days}`);
+    }
+    keyboard
+        .row()
+        .text('Edit offer', `edit:${o.id}`)
+        .row()
+        .text(o.repostStopped ? 'Resume reposting' : 'Stop reposting', `rp:${o.repostStopped ? 'go' : 'stop'}:${o.id}`);
+    return keyboard;
+}
+
+// The offer if this account posted it and it is still open. Used by the private controls.
+async function ownedOpenOffer(offerId: string, telegramId: number): Promise<ManagedOffer | null> {
+    const { rows } = await pool.query<ManagedOffer>(
+        `SELECT t.id, t.title, t."subCity", t."salaryUnit", t."salaryAmountEtb",
+                t."repostEveryDays", t."repostStopped"
+         FROM "TutoringOffer" t
+         JOIN "Organization" o ON o.id = t."organizationId"
+         WHERE t.id = $1 AND o."telegramUserId" = $2 AND t.status = 'OPEN'`,
+        [offerId, telegramId]
+    );
+    return rows[0] ?? null;
 }
 
 export function registerAgencyHandlers(bot: Bot) {
@@ -248,6 +360,8 @@ export function registerAgencyHandlers(bot: Bot) {
         templateDrafts.delete(ctx.from!.id);
         const draft: Draft = {
             id: randomUUID(),
+            chatId: ctx.chat!.id,
+            editOfferId: null,
             orgId: agency.id,
             orgName: agency.name,
             orgUsername: agency.telegramUsername,
@@ -257,7 +371,7 @@ export function registerAgencyHandlers(bot: Bot) {
             subjects: [],
         };
         drafts.set(ctx.from!.id, draft);
-        await ask(ctx, draft);
+        await ask(replyTo(ctx), draft);
     });
 
     // Grade multi-select.
@@ -285,7 +399,7 @@ export function registerAgencyHandlers(bot: Bot) {
             await ctx.answerCallbackQuery();
             await ctx.editMessageText(`Grades: ${listLabel(d.grades, GRADES, 'All Grades', 'Not specified')}`);
             d.step = 'subjects';
-            return ask(ctx, d);
+            return ask(replyTo(ctx), d);
         }
 
         let next: string[];
@@ -327,7 +441,7 @@ export function registerAgencyHandlers(bot: Bot) {
         }
 
         await ctx.answerCallbackQuery();
-        await ask(ctx, d);
+        await ask(replyTo(ctx), d);
     });
 
     // Skip buttons for the optional steps.
@@ -351,7 +465,7 @@ export function registerAgencyHandlers(bot: Bot) {
         }
 
         await ctx.answerCallbackQuery();
-        await ask(ctx, d);
+        await ask(replyTo(ctx), d);
     });
 
     bot.callbackQuery(/^ag:post:yes:([^:]+)$/, async (ctx) => {
@@ -365,6 +479,21 @@ export function registerAgencyHandlers(bot: Bot) {
         if (sessionId !== d.id || d.step !== 'confirm') { await ctx.answerCallbackQuery({ text: 'This confirmation has expired.' }); return; }
         // Remove the draft before saving, so a second tap cannot post the same offer again.
         drafts.delete(ctx.from.id);
+
+        if (d.editOfferId) {
+            try {
+                const saved = await saveOfferEdit(ctx.api, d);
+                await ctx.answerCallbackQuery();
+                return ctx.reply(
+                    saved
+                        ? 'Offer updated. Its posts show the new details, and tutors who already received it have been told about the change.'
+                        : 'This offer is closed, so it was not changed.'
+                );
+            } catch (err) {
+                drafts.set(ctx.from.id, d);
+                throw err;
+            }
+        }
 
         const gradesText = listLabel(d.grades, GRADES, 'All Grades', 'Any grade');
         const title = `Tutor (${gradesText})`;
@@ -415,6 +544,133 @@ export function registerAgencyHandlers(bot: Bot) {
             'Offer saved. Within a few minutes you will get a report here: where it was posted, ' +
             'and how many tutors have received it so far.'
         );
+    });
+
+    bot.callbackQuery(/^ag:post:edit:([^:]+)$/, async (ctx) => {
+        const d = drafts.get(ctx.from.id);
+        const sessionId = (ctx.match as RegExpMatchArray)[1];
+        if (!d || sessionId !== d.id || d.step !== 'confirm') { await ctx.answerCallbackQuery({ text: 'This confirmation has expired.' }); return; }
+        d.step = 'grades';
+        await ctx.answerCallbackQuery();
+        return ask(replyTo(ctx), d);
+    });
+
+    // "Edit offer" on a posted offer. The form opens in the agency's private chat with the current answers filled in.
+    bot.callbackQuery(/^edit:([^:]+)$/, async (ctx) => {
+        const offerId = (ctx.match as RegExpMatchArray)[1];
+        const { rows } = await pool.query(
+            `SELECT t.id, t.title, t.status, t."gradeLevels", t.subjects, t."subCity", t."locationDetail",
+                    t."sessionsPerWeek", t."sessionHours", t."salaryUnit", t."salaryAmountEtb",
+                    t."preferredTutorGender", t.requirements,
+                    o.id AS "orgId", o.name AS "orgName", o."telegramUsername" AS "orgUsername",
+                    o."postTemplate"
+             FROM "TutoringOffer" t
+             JOIN "Organization" o ON o.id = t."organizationId"
+             WHERE t.id = $1 AND o."telegramUserId" = $2`,
+            [offerId, ctx.from.id]
+        );
+        const row = rows[0];
+        if (!row) {
+            return ctx.answerCallbackQuery({ text: 'Only the agency that posted this offer can edit it.', show_alert: true });
+        }
+        if (row.status !== 'OPEN') {
+            return ctx.answerCallbackQuery({ text: 'This offer is closed and cannot be edited.', show_alert: true });
+        }
+
+        const draft: Draft = {
+            id: randomUUID(),
+            chatId: ctx.from.id,
+            editOfferId: row.id,
+            orgId: row.orgId,
+            orgName: row.orgName,
+            orgUsername: row.orgUsername,
+            postTemplate: row.postTemplate ?? null,
+            step: 'grades',
+            grades: row.gradeLevels ?? [],
+            subjects: row.subjects ?? [],
+            subCity: row.subCity,
+            locationDetail: row.locationDetail ?? null,
+            sessionsPerWeek: row.sessionsPerWeek,
+            unit: row.salaryUnit as Unit,
+            amount: row.salaryAmountEtb ?? undefined,
+            sessionHours: row.sessionHours == null ? undefined : Number(row.sessionHours),
+            gender: (row.preferredTutorGender ?? null) as Gender,
+            requirements: row.requirements ?? null,
+        };
+
+        try {
+            await ctx.api.sendMessage(
+                ctx.from.id,
+                `Editing "${row.title}". Your current answers are filled in. Go through the steps, then check the preview before saving.`
+            );
+        } catch (err) {
+            console.error('Could not open the edit form in private chat:', err);
+            return ctx.answerCallbackQuery({
+                text: 'Open a private chat with the bot and send /start first, then try again.',
+                show_alert: true,
+            });
+        }
+
+        drafts.set(ctx.from.id, draft);
+        await ctx.answerCallbackQuery({ text: 'Sent to your private chat with NextTutor.' });
+        await ask(privateReply(ctx.api, ctx.from.id), draft);
+    });
+
+    // Private controls for the agency's open offers.
+    bot.command('myoffers', async (ctx) => {
+        const { rows } = await pool.query<ManagedOffer>(
+            `SELECT t.id, t.title, t."subCity", t."salaryUnit", t."salaryAmountEtb",
+                    t."repostEveryDays", t."repostStopped"
+             FROM "TutoringOffer" t
+             JOIN "Organization" o ON o.id = t."organizationId"
+             WHERE o."telegramUserId" = $1 AND t.status = 'OPEN'
+             ORDER BY t."postedAt" DESC
+             LIMIT 10`,
+            [ctx.from!.id]
+        );
+        if (rows.length === 0) {
+            return ctx.reply('You have no open offers. Send /new to post one.');
+        }
+
+        await ctx.reply(
+            `Your open offers (${rows.length}). Pick how often each one is reposted, edit it, or pause reposting. ` +
+            'Only you can see these settings.'
+        );
+        for (const o of rows) {
+            await ctx.reply(manageText(o), { reply_markup: manageKeyboard(o) });
+        }
+    });
+
+    bot.callbackQuery(/^rp:d:([^:]+):(\d+)$/, async (ctx) => {
+        const [, offerId, daysText] = ctx.match as RegExpMatchArray;
+        const days = Number(daysText);
+        if (!REPOST_CHOICES.includes(days)) return ctx.answerCallbackQuery();
+
+        const o = await ownedOpenOffer(offerId, ctx.from.id);
+        if (!o) {
+            return ctx.answerCallbackQuery({ text: 'This offer is closed or not yours.', show_alert: true });
+        }
+
+        await pool.query(`UPDATE "TutoringOffer" SET "repostEveryDays" = $2 WHERE id = $1`, [offerId, days]);
+        const updated = { ...o, repostEveryDays: days };
+        await ctx.answerCallbackQuery({ text: `Reposting every ${days} day${days === 1 ? '' : 's'}.` });
+        await ctx.editMessageText(manageText(updated), { reply_markup: manageKeyboard(updated) });
+    });
+
+    bot.callbackQuery(/^rp:(stop|go):([^:]+)$/, async (ctx) => {
+        const [, action, offerId] = ctx.match as RegExpMatchArray;
+        const o = await ownedOpenOffer(offerId, ctx.from.id);
+        if (!o) {
+            return ctx.answerCallbackQuery({ text: 'This offer is closed or not yours.', show_alert: true });
+        }
+
+        const stopped = action === 'stop';
+        await setRepostStopped(ctx.api, offerId, stopped);
+        const updated = { ...o, repostStopped: stopped };
+        await ctx.answerCallbackQuery({
+            text: stopped ? 'Reposting paused. The offer stays open.' : 'Reposting resumed.',
+        });
+        await ctx.editMessageText(manageText(updated), { reply_markup: manageKeyboard(updated) });
     });
 
     bot.callbackQuery(/^ag:post:no:([^:]+)$/, async (ctx) => {
@@ -500,13 +756,13 @@ export function registerAgencyHandlers(bot: Bot) {
             }
             d.subjects = subjects;
             d.step = 'area';
-            return ask(ctx, d);
+            return ask(replyTo(ctx), d);
         }
 
         if (d.step === 'location') {
             d.locationDetail = text.slice(0, 200) || null;
             d.step = 'sessions';
-            return ask(ctx, d);
+            return ask(replyTo(ctx), d);
         }
 
         if (d.step === 'amount') {
@@ -517,7 +773,7 @@ export function registerAgencyHandlers(bot: Bot) {
             }
             d.amount = amount;
             d.step = 'hours';
-            return ask(ctx, d);
+            return ask(replyTo(ctx), d);
         }
 
         if (d.step === 'hours') {
@@ -527,13 +783,13 @@ export function registerAgencyHandlers(bot: Bot) {
             }
             d.sessionHours = hours;
             d.step = 'gender';
-            return ask(ctx, d);
+            return ask(replyTo(ctx), d);
         }
 
         if (d.step === 'requirements') {
             d.requirements = text.slice(0, 500) || null;
             d.step = 'confirm';
-            return ask(ctx, d);
+            return ask(replyTo(ctx), d);
         }
 
         return next();

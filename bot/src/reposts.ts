@@ -17,6 +17,8 @@ type PostOffer = CardOffer & {
     channelMessageId: string | null;
     postDestination: 'GROUP' | 'CHANNEL' | 'BOTH';
     telegramUserId: string | null;
+    repostStopped: boolean;
+    repostEveryDays: number;
 };
 
 // Same select for posting and for closing, so both see the same fields.
@@ -26,6 +28,7 @@ const OFFER_SELECT = `
            t."salaryUnit", t."salaryAmountEtb", t."monthlySalaryEtb",
            t."preferredTutorGender", t.requirements, t.status,
            t."groupMessageId", t."channelMessageId",
+           t."repostStopped", t."repostEveryDays",
            o.name AS "agencyName",
            o."telegramUsername" AS "agencyUsername",
            o."postTemplate", o."groupChatId", o."channelChatId",
@@ -54,12 +57,18 @@ function targets(o: PostOffer): { kind: 'group' | 'channel'; chatId: number }[] 
 // After this many failed attempts, an offer stops being retried until someone resets it.
 const MAX_POST_FAILURES = 5;
 
-// The two buttons under every group or channel post.
-function offerButtons(o: PostOffer) {
-    return new InlineKeyboard()
-        .text('Close this offer', `close:${o.id}`)
+// The buttons under every group or channel post. "Stop reposting" is hidden once reposting is paused.
+export function offerButtons(o: Pick<PostOffer, 'id' | 'repostStopped'>) {
+    const keyboard = new InlineKeyboard()
+        .text('Edit offer', `edit:${o.id}`)
         .row()
-        .text('Stop reposting', `stop:${o.id}`);
+        .text('Close this offer', `close:${o.id}`);
+    if (!o.repostStopped) keyboard.row().text('Stop reposting', `stop:${o.id}`);
+    return keyboard;
+}
+
+function isNotModified(err: unknown): boolean {
+    return err instanceof Error && /message is not modified/i.test(err.message);
 }
 
 // Posts every open offer that has never been posted, or is due for a repost.
@@ -203,7 +212,7 @@ export function registerRepostHandlers(bot: Bot) {
 
         await ctx.answerCallbackQuery({ text: 'Reposting stopped. The offer stays open.' });
         await ctx.editMessageReplyMarkup({
-            reply_markup: new InlineKeyboard().text('Close this offer', `close:${o.id}`),
+            reply_markup: offerButtons({ id: o.id, repostStopped: true }),
         });
     });
 }
@@ -286,3 +295,66 @@ export async function closeOfferEverywhere(api: Api, offerId: string): Promise<v
         }
     }
 }
+// Updates the group and channel posts after an edit, and lets matching tutors who haven't seen the offer receive it.
+// If a post can't be edited (for example, it was deleted), the scheduler posts it again on its next run.
+export async function refreshOfferPosts(api: Api, offerId: string): Promise<PostOffer | null> {
+    const o = await loadOffer(offerId);
+    if (!o) return null;
+
+    const text = offerCardText(o, 'OPEN');
+    let needsRepost = false;
+    for (const place of [
+        { chat: o.groupChatId, message: o.groupMessageId },
+        { chat: o.channelChatId, message: o.channelMessageId },
+    ]) {
+        if (!place.chat || !place.message) continue;
+        try {
+            await api.editMessageText(Number(place.chat), Number(place.message), text, {
+                reply_markup: offerButtons(o),
+            });
+        } catch (err) {
+            if (isNotModified(err)) continue;
+            console.error(`Could not update offer ${o.id} in chat ${place.chat}:`, err);
+            needsRepost = true;
+        }
+    }
+
+    // Clearing alertedAt makes the alert loop check the new details. Tutors who already got the offer are skipped.
+    await pool.query(
+        `UPDATE "TutoringOffer"
+         SET "alertedAt" = NULL,
+             "lastPostedToChannelAt" = CASE WHEN $2::boolean THEN NULL ELSE "lastPostedToChannelAt" END
+         WHERE id = $1`,
+        [o.id, needsRepost]
+    );
+    return o;
+}
+
+// Pauses or resumes reposting. Resuming reposts the offer on the next scheduler run.
+export async function setRepostStopped(api: Api, offerId: string, stopped: boolean): Promise<PostOffer | null> {
+    await pool.query(
+        `UPDATE "TutoringOffer"
+         SET "repostStopped" = $2::boolean,
+             "lastPostedToChannelAt" = CASE WHEN $2::boolean THEN "lastPostedToChannelAt" ELSE NULL END
+         WHERE id = $1`,
+        [offerId, stopped]
+    );
+    const o = await loadOffer(offerId);
+    if (!o) return null;
+
+    for (const place of [
+        { chat: o.groupChatId, message: o.groupMessageId },
+        { chat: o.channelChatId, message: o.channelMessageId },
+    ]) {
+        if (!place.chat || !place.message) continue;
+        try {
+            await api.editMessageReplyMarkup(Number(place.chat), Number(place.message), {
+                reply_markup: offerButtons(o),
+            });
+        } catch (err) {
+            if (!isNotModified(err)) console.error(`Could not update buttons for offer ${o.id}:`, err);
+        }
+    }
+    return o;
+}
+

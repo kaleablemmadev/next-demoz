@@ -25,6 +25,7 @@ export const AGENCY_COMMANDS = [
     { command: 'start', description: 'Open the agency menu' },
     { command: 'new', description: 'Post a new tutoring offer' },
     { command: 'template', description: 'Edit your offer post template' },
+    { command: 'myoffers', description: 'Edit, repost settings and pause for your open offers' },
     { command: 'cancel', description: 'Cancel the current form' },
     { command: 'menu', description: 'Show the agency menu' },
     { command: 'help', description: 'List agency functions' },
@@ -47,6 +48,7 @@ export const PARENT_COMMANDS = [
 export const AGENCY_HELP =
     'NextTutor agency functions\n\n' +
     '/new - Create and publish a tutoring offer.\n' +
+    '/myoffers - See your open offers. Change how often each is reposted, pause reposting, or edit it.\n' +
     '/template - Create or replace your reusable offer-post layout. Use supported placeholders such as {GRADES} and {MONTHLY_SALARY}.\n' +
     '/cancel - Cancel the current form or template edit.\n' +
     '/menu - Show the agency menu.\n' +
@@ -140,7 +142,7 @@ export async function showAgencyMenu(ctx: Context) {
         );
     }
     await setChatCommands(ctx, AGENCY_COMMANDS);
-    return ctx.reply('Agency menu\n\n/new - create a tutoring offer\n/template - edit your reusable post template\n/supply - see tutor counts by grade\n/cancel - cancel the current form\n/leave - request to leave NextTutor\n/help - list agency functions');
+    return ctx.reply('Agency menu\n\n/new - create a tutoring offer\n/myoffers - manage your open offers\n/template - edit your reusable post template\n/supply - see tutor counts by grade\n/cancel - cancel the current form\n/leave - request to leave NextTutor\n/help - list agency functions');
 }
 
 export async function showParentMenu(ctx: Context) {

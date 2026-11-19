@@ -1,9 +1,9 @@
 // src/alerts.ts
 
-import { Bot } from 'grammy';
+import { Api, Bot } from 'grammy';
 import { pool } from './db.js';
 import { areasNear } from '../../shared/rules/nearby-areas.js';
-import { offerCardText, type CardOffer } from './card.js';
+import { offerCardText, payLine, summaryLine, type CardOffer } from './card.js';
 
 export type AlertOffer = CardOffer & {
     id: string;
@@ -101,5 +101,33 @@ export async function sendOfferAlerts(bot: Bot, offer: AlertOffer): Promise<numb
         )
     );
 
+    return sent;
+}
+
+// After an edit, a short notice goes to every tutor who already received this offer.
+// Tutors who were never sent it get the full offer through the normal alert instead.
+export async function notifyUpdatedOffer(api: Api, offer: CardOffer & { id: string; title: string }): Promise<number> {
+    const { rows } = await pool.query<Subscriber>(
+        `SELECT s."telegramId"::text AS "telegramId"
+         FROM "OfferDelivery" d
+         JOIN "TelegramSubscriber" s ON s.id = d."subscriberId"
+         WHERE d."offerId" = $1`,
+        [offer.id]
+    );
+
+    const text =
+        `An offer you received was updated:\n\n` +
+        `${offer.title}\n${summaryLine(offer)}\n${payLine(offer)}\n\n` +
+        `Check the agency's post for the full details.`;
+
+    let sent = 0;
+    for (const sub of rows) {
+        try {
+            await api.sendMessage(sub.telegramId, text);
+            sent++;
+        } catch (err) {
+            console.error(`Could not send the update notice to ${sub.telegramId}:`, err);
+        }
+    }
     return sent;
 }
