@@ -1,36 +1,34 @@
 // src/sefers.ts
 
-// Admin management of sefers: add, rename, move, link nearby sefers, delete, and review agency proposals.
+// Admin management of sefers: add, rename, move, set nearby sefers, delete, and review agency proposals.
 import { Bot, InlineKeyboard, type Api, type Context } from 'grammy';
 import { pool } from './db.js';
 import { isAdmin } from './admin.js';
 import { KNOWN_SUB_CITIES, getDirectNeighbours } from '../../shared/rules/nearby-areas.js';
 
-type Pending = { kind: 'addName' } | { kind: 'addCity'; name: string } | { kind: 'rename'; id: string };
-
 type Candidate = { id: string; name: string; subCity: string };
 
-// The nearby picker. In add mode the sefer is created when Done is tapped; in edit mode the links of an existing sefer change.
-type Picker = {
-    mode: 'add' | 'edit';
-    id: string | null;
-    name: string;
-    subCity: string;
+// A nearby-sefer checklist, for a new sefer or an existing one.
+type Pick = {
+    target: { mode: 'new'; name: string; subCity: string } | { mode: 'edit'; id: string; name: string };
     candidates: Candidate[];
-    selected: Set<string>;
-    awaiting: null | 'newName' | 'newCity';
-    newName?: string;
+    chosen: Set<string>;
 };
 
+type Pending =
+    | { kind: 'addName'; subCity: string }
+    | { kind: 'rename'; id: string }
+    | { kind: 'pick'; pick: Pick }
+    | { kind: 'pickNew'; pick: Pick }
+    | { kind: 'pickCity'; pick: Pick; name: string };
+
 const pending = new Map<number, Pending>();
-const pickers = new Map<number, Picker>();
 
 type SeferRow = { id: string; name: string; subCity: string; status: string; proposedByTelegramId: string | null };
-type Reply = (text: string, other?: { reply_markup: InlineKeyboard }) => Promise<unknown>;
 
 const adminOnly = 'This is for the NextTutor admin only.';
 
-async function sendMenu(reply: Reply) {
+async function sendMenu(reply: (text: string, other?: { reply_markup: InlineKeyboard }) => Promise<unknown>) {
     const { rows } = await pool.query<{ pending: number; approved: number }>(
         `SELECT count(*) FILTER (WHERE status = 'PENDING')::int AS pending,
                 count(*) FILTER (WHERE status = 'APPROVED')::int AS approved
@@ -51,14 +49,10 @@ async function sendMenu(reply: Reply) {
     );
 }
 
-function subCityKeyboard(prefix: string) {
+async function showSubCities(reply: (text: string, other?: { reply_markup: InlineKeyboard }) => Promise<unknown>) {
     const kb = new InlineKeyboard();
-    KNOWN_SUB_CITIES.forEach((city, i) => kb.text(city, `${prefix}:${i}`).row());
-    return kb;
-}
-
-async function showSubCities(reply: Reply) {
-    return reply('Choose a sub-city.', { reply_markup: subCityKeyboard('sf:city') });
+    KNOWN_SUB_CITIES.forEach((city, i) => kb.text(city, `sf:city:${i}`).row());
+    return reply('Choose a sub-city.', { reply_markup: kb });
 }
 
 async function neighbourNames(id: string): Promise<string[]> {
@@ -70,7 +64,10 @@ async function neighbourNames(id: string): Promise<string[]> {
     return rows.map((r) => r.name);
 }
 
-async function showSefer(reply: Reply, id: string) {
+async function showSefer(
+    reply: (text: string, other?: { reply_markup: InlineKeyboard }) => Promise<unknown>,
+    id: string
+) {
     const { rows } = await pool.query<SeferRow>(
         `SELECT id, name, "subCity", status, "proposedByTelegramId"::text FROM "Sefer" WHERE id = $1`,
         [id]
@@ -104,28 +101,38 @@ async function tellProposer(api: Api, telegramId: string | null, text: string) {
     }
 }
 
-// Sefers in the sub-city and its bordering sub-cities, which are the likely nearby ones.
-async function candidatesFor(subCity: string, exceptId: string | null): Promise<Candidate[]> {
-    const areas = [subCity, ...getDirectNeighbours(subCity)];
+// Approved sefers that can be nearby. Order: current neighbours, same sub-city, bordering sub-cities, then the rest.
+async function loadCandidates(subCity: string, exceptId: string | null, currentIds: string[]): Promise<Candidate[]> {
     const { rows } = await pool.query<Candidate>(
         `SELECT id, name, "subCity" FROM "Sefer"
-         WHERE status = 'APPROVED' AND "subCity" = ANY($1::text[]) AND id IS DISTINCT FROM $2
-         ORDER BY "subCity", name
-         LIMIT 60`,
-        [areas, exceptId]
+         WHERE status = 'APPROVED' AND id IS DISTINCT FROM $1`,
+        [exceptId]
     );
-    return rows;
+    const neighbours = new Set<string>(getDirectNeighbours(subCity));
+    const rank = (c: Candidate) =>
+        currentIds.includes(c.id) ? 0 : c.subCity === subCity ? 1 : neighbours.has(c.subCity) ? 2 : 3;
+    return rows
+        .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
+        .slice(0, 60);
 }
 
-async function currentNearbyIds(id: string): Promise<string[]> {
-    const { rows } = await pool.query<{ neighbourId: string }>(
-        `SELECT "neighbourId" FROM "SeferNeighbour" WHERE "seferId" = $1`,
-        [id]
-    );
-    return rows.map((r) => r.neighbourId);
+function pickKeyboard(pick: Pick): InlineKeyboard {
+    const kb = new InlineKeyboard();
+    pick.candidates.forEach((c, i) => {
+        const mark = pick.chosen.has(c.id) ? '✅ ' : '';
+        kb.text(`${mark}${c.name} · ${c.subCity}`, `sf:pk:${i}`).row();
+    });
+    kb.text('Create a sefer not listed', 'sf:pnew').row();
+    kb.text(pick.chosen.size ? `Done (${pick.chosen.size} nearby)` : 'Done (no nearby)', 'sf:pkdone');
+    return kb;
 }
 
-// Replaces the nearby sefers of one sefer, keeping both directions in step.
+function pickTitle(pick: Pick): string {
+    const name = pick.target.name;
+    return `Tap the sefers that are nearby ${name}. Tap again to unselect. Tap Done when finished.`;
+}
+
+// Replaces the nearby links of one sefer, keeping both directions in step.
 async function writeNearby(id: string, ids: string[]) {
     const client = await pool.connect();
     try {
@@ -147,59 +154,26 @@ async function writeNearby(id: string, ids: string[]) {
     }
 }
 
-// Creates an approved sefer. Returns null if the name is already used.
-async function createSefer(name: string, subCity: string): Promise<string | null> {
-    try {
-        const { rows } = await pool.query<{ id: string }>(
-            `INSERT INTO "Sefer" (name, "subCity", status) VALUES ($1, $2, 'APPROVED') RETURNING id`,
-            [name, subCity]
-        );
-        return rows[0].id;
-    } catch (err) {
-        if ((err as { code?: string }).code === '23505') return null;
-        throw err;
-    }
-}
-
-function pickerText(p: Picker): string {
-    const head = p.mode === 'add'
-        ? `Nearby sefers for ${p.name} (${p.subCity}).`
-        : `Nearby sefers for ${p.name} (${p.subCity}).`;
-    const hint = p.candidates.length === 0
-        ? '\nNo sefers in this area or its neighbours yet. Create one below.'
-        : '';
-    return `${head}\nTap to select, tap again to remove. Selected: ${p.selected.size}.${hint}`;
-}
-
-function pickerKeyboard(p: Picker): InlineKeyboard {
-    const kb = new InlineKeyboard();
-    p.candidates.forEach((c, i) => {
-        const mark = p.selected.has(c.id) ? '✅ ' : '';
-        kb.text(`${mark}${c.name} · ${c.subCity}`.slice(0, 60), `sf:pk:${i}`).row();
-    });
-    kb.text('Create a sefer not listed', 'sf:pnew').row();
-    kb.text('Done', 'sf:pdone');
-    return kb;
-}
-
 export function registerSeferHandlers(bot: Bot) {
-    bot.command('sefers', async (ctx) => {
-        if (!isAdmin(ctx)) return ctx.reply(adminOnly);
-        if (ctx.chat?.type !== 'private') return ctx.reply('Use /sefers in a private chat with the bot.');
-        return sendMenu((text, other) => ctx.reply(text, other));
-    });
-
     bot.callbackQuery('sf:menu', async (ctx) => {
         if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
         await ctx.answerCallbackQuery();
         return sendMenu((text, other) => ctx.reply(text, other));
     });
 
+    bot.command('sefers', async (ctx) => {
+        if (!isAdmin(ctx)) return ctx.reply(adminOnly);
+        if (ctx.chat?.type !== 'private') return ctx.reply('Use /sefers in a private chat with the bot.');
+        return sendMenu((text, other) => ctx.reply(text, other));
+    });
+
     bot.callbackQuery('sf:add', async (ctx) => {
         if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
-        pending.set(ctx.from.id, { kind: 'addName' });
+        pending.delete(ctx.from.id);
         await ctx.answerCallbackQuery();
-        return ctx.reply('Type the sefer name. Send /cancel to stop.');
+        const kb = new InlineKeyboard();
+        KNOWN_SUB_CITIES.forEach((city, i) => kb.text(city, `sf:addcity:${i}`).row());
+        return ctx.reply('Which sub-city is the new sefer in?', { reply_markup: kb });
     });
 
     bot.callbackQuery('sf:browse', async (ctx) => {
@@ -208,7 +182,7 @@ export function registerSeferHandlers(bot: Bot) {
         return showSubCities((text, other) => ctx.reply(text, other));
     });
 
-    // Browse: the approved sefers of one sub-city.
+    // Add flow: the sub-city is chosen by index, then the name is typed.
     bot.callbackQuery(/^sf:city:(\d+)$/, async (ctx) => {
         if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
         const city = KNOWN_SUB_CITIES[Number((ctx.match as RegExpMatchArray)[1])];
@@ -225,22 +199,14 @@ export function registerSeferHandlers(bot: Bot) {
         return ctx.reply(`${city}: ${rows.length} approved sefer(s).`, { reply_markup: kb });
     });
 
-    // Add, step 2: the sub-city of the new sefer. Then the nearby picker.
+    // Add flow, step 2: the name, typed next.
     bot.callbackQuery(/^sf:addcity:(\d+)$/, async (ctx) => {
         if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
-        const p = pending.get(ctx.from.id);
         const city = KNOWN_SUB_CITIES[Number((ctx.match as RegExpMatchArray)[1])];
-        if (!p || p.kind !== 'addCity' || !city) {
-            return ctx.answerCallbackQuery({ text: 'This step has expired. Send /sefers to start again.', show_alert: true });
-        }
-        pending.delete(ctx.from.id);
+        if (!city) return ctx.answerCallbackQuery({ text: 'Unknown sub-city.', show_alert: true });
+        pending.set(ctx.from.id, { kind: 'addName', subCity: city });
         await ctx.answerCallbackQuery();
-        const picker: Picker = {
-            mode: 'add', id: null, name: p.name, subCity: city,
-            candidates: await candidatesFor(city, null), selected: new Set(), awaiting: null,
-        };
-        pickers.set(ctx.from.id, picker);
-        return ctx.reply(pickerText(picker), { reply_markup: pickerKeyboard(picker) });
+        return ctx.reply(`Type the name of the new sefer in ${city}. Send /cancel to stop.`);
     });
 
     bot.callbackQuery(/^sf:view:([^:]+)$/, async (ctx) => {
@@ -256,92 +222,122 @@ export function registerSeferHandlers(bot: Bot) {
         return ctx.reply('Type the new name. Send /cancel to stop.');
     });
 
-    // Edit nearby: the same picker, starting from the current links.
     bot.callbackQuery(/^sf:nby:([^:]+)$/, async (ctx) => {
         if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
         const id = (ctx.match as RegExpMatchArray)[1];
-        const { rows } = await pool.query<SeferRow>(
-            `SELECT id, name, "subCity", status, "proposedByTelegramId"::text FROM "Sefer" WHERE id = $1`,
+        const { rows } = await pool.query<{ name: string; subCity: string }>(
+            `SELECT name, "subCity" FROM "Sefer" WHERE id = $1`,
             [id]
         );
         if (!rows[0]) return ctx.answerCallbackQuery({ text: 'That sefer no longer exists.', show_alert: true });
-        await ctx.answerCallbackQuery();
-        const s = rows[0];
-        const current = await currentNearbyIds(id);
-        const candidates = await candidatesFor(s.subCity, id);
-        const picker: Picker = {
-            mode: 'edit', id, name: s.name, subCity: s.subCity,
-            candidates, selected: new Set(current), awaiting: null,
+        const current = (await pool.query<{ id: string }>(
+            `SELECT "neighbourId" AS id FROM "SeferNeighbour" WHERE "seferId" = $1`,
+            [id]
+        )).rows.map((r) => r.id);
+        const pick: Pick = {
+            target: { mode: 'edit', id, name: rows[0].name },
+            candidates: await loadCandidates(rows[0].subCity, id, current),
+            chosen: new Set(current),
         };
-        pickers.set(ctx.from.id, picker);
-        return ctx.reply(pickerText(picker), { reply_markup: pickerKeyboard(picker) });
+        pending.set(ctx.from.id, { kind: 'pick', pick });
+        await ctx.answerCallbackQuery();
+        return ctx.reply(pickTitle(pick), { reply_markup: pickKeyboard(pick) });
     });
 
-    // Picker: toggle one candidate.
+    // Checklist: toggle one sefer.
     bot.callbackQuery(/^sf:pk:(\d+)$/, async (ctx) => {
         if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
-        const p = pickers.get(ctx.from.id);
-        const c = p?.candidates[Number((ctx.match as RegExpMatchArray)[1])];
-        if (!p || !c) return ctx.answerCallbackQuery({ text: 'This picker has expired. Start again.', show_alert: true });
-        if (p.selected.has(c.id)) p.selected.delete(c.id);
-        else p.selected.add(c.id);
+        const p = pending.get(ctx.from.id);
+        if (!p || p.kind !== 'pick') {
+            return ctx.answerCallbackQuery({ text: 'This list has expired. Start again from /sefers.', show_alert: true });
+        }
+        const candidate = p.pick.candidates[Number((ctx.match as RegExpMatchArray)[1])];
+        if (!candidate) return ctx.answerCallbackQuery({ text: 'That choice has expired.', show_alert: true });
+        if (p.pick.chosen.has(candidate.id)) p.pick.chosen.delete(candidate.id);
+        else p.pick.chosen.add(candidate.id);
         await ctx.answerCallbackQuery();
-        return ctx.editMessageText(pickerText(p), { reply_markup: pickerKeyboard(p) });
+        return ctx.editMessageReplyMarkup({ reply_markup: pickKeyboard(p.pick) });
     });
 
-    // Picker: create a sefer that is not listed, then pick its sub-city.
+    // Checklist: create a sefer that is not listed. Its name is typed, then its sub-city is tapped.
     bot.callbackQuery('sf:pnew', async (ctx) => {
         if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
-        const p = pickers.get(ctx.from.id);
-        if (!p) return ctx.answerCallbackQuery({ text: 'This picker has expired. Start again.', show_alert: true });
-        p.awaiting = 'newName';
+        const p = pending.get(ctx.from.id);
+        if (!p || p.kind !== 'pick') {
+            return ctx.answerCallbackQuery({ text: 'This list has expired. Start again from /sefers.', show_alert: true });
+        }
+        pending.set(ctx.from.id, { kind: 'pickNew', pick: p.pick });
         await ctx.answerCallbackQuery();
-        return ctx.reply('Type the name of the new sefer. Send /cancel to stop.');
+        return ctx.reply('Type the name of the sefer that is not listed. Send /cancel to stop.');
     });
 
     bot.callbackQuery(/^sf:pcity:(\d+)$/, async (ctx) => {
         if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
-        const p = pickers.get(ctx.from.id);
+        const p = pending.get(ctx.from.id);
         const city = KNOWN_SUB_CITIES[Number((ctx.match as RegExpMatchArray)[1])];
-        if (!p || p.awaiting !== 'newCity' || !p.newName || !city) {
-            return ctx.answerCallbackQuery({ text: 'This step has expired. Start again.', show_alert: true });
+        if (!p || p.kind !== 'pickCity' || !city) {
+            return ctx.answerCallbackQuery({ text: 'This step has expired. Start again from /sefers.', show_alert: true });
         }
-        const id = await createSefer(p.newName, city);
-        if (!id) {
-            p.awaiting = null;
-            await ctx.answerCallbackQuery();
-            return ctx.reply('A sefer with this name already exists. Tap it in the list, or create a different one.');
+        let id: string;
+        try {
+            const { rows } = await pool.query<{ id: string }>(
+                `INSERT INTO "Sefer" (name, "subCity", status) VALUES ($1, $2, 'APPROVED') RETURNING id`,
+                [p.name, city]
+            );
+            id = rows[0].id;
+        } catch (err) {
+            if ((err as { code?: string }).code === '23505') {
+                pending.set(ctx.from.id, { kind: 'pick', pick: p.pick });
+                await ctx.answerCallbackQuery();
+                return ctx.reply('A sefer with this name already exists. Tap it in the list instead.');
+            }
+            throw err;
         }
-        p.candidates.unshift({ id, name: p.newName, subCity: city });
-        p.selected.add(id);
-        p.awaiting = null;
-        p.newName = undefined;
-        await ctx.answerCallbackQuery({ text: `${city === p.subCity ? 'Created.' : 'Created in ' + city + '.'}` });
-        return ctx.reply(pickerText(p), { reply_markup: pickerKeyboard(p) });
+        // The new sefer joins the list and is ticked, so it is linked when Done is tapped.
+        p.pick.candidates.unshift({ id, name: p.name, subCity: city });
+        p.pick.chosen.add(id);
+        pending.set(ctx.from.id, { kind: 'pick', pick: p.pick });
+        await ctx.answerCallbackQuery({ text: `Created ${p.name} in ${city}.` });
+        return ctx.reply(pickTitle(p.pick), { reply_markup: pickKeyboard(p.pick) });
     });
 
-    // Picker: save.
-    bot.callbackQuery('sf:pdone', async (ctx) => {
+    // Checklist: save. A new sefer is created here, with its nearby links.
+    bot.callbackQuery('sf:pkdone', async (ctx) => {
         if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
-        const p = pickers.get(ctx.from.id);
-        if (!p) return ctx.answerCallbackQuery({ text: 'This picker has expired. Start again.', show_alert: true });
-        await ctx.answerCallbackQuery();
-        const links = [...p.selected];
-        if (p.mode === 'add') {
-            const id = await createSefer(p.name, p.subCity);
-            if (!id) {
-                pickers.delete(ctx.from.id);
-                return ctx.reply('A sefer with this name already exists. Send /sefers to start again.');
-            }
-            await writeNearby(id, links);
-        } else if (p.id) {
-            await writeNearby(p.id, links);
+        const p = pending.get(ctx.from.id);
+        if (!p || p.kind !== 'pick') {
+            return ctx.answerCallbackQuery({ text: 'This list has expired. Start again from /sefers.', show_alert: true });
         }
-        pickers.delete(ctx.from.id);
-        const count = links.length ? `${links.length} nearby sefer(s)` : 'no nearby sefers';
-        return ctx.reply(p.mode === 'add'
-            ? `Saved: ${p.name} in ${p.subCity} with ${count}.`
-            : `Nearby sefers for ${p.name} saved: ${count}.`);
+        const pick = p.pick;
+        let id: string;
+        if (pick.target.mode === 'new') {
+            try {
+                const { rows } = await pool.query<{ id: string }>(
+                    `INSERT INTO "Sefer" (name, "subCity", status) VALUES ($1, $2, 'APPROVED') RETURNING id`,
+                    [pick.target.name, pick.target.subCity]
+                );
+                id = rows[0].id;
+            } catch (err) {
+                if ((err as { code?: string }).code === '23505') {
+                    pending.delete(ctx.from.id);
+                    await ctx.answerCallbackQuery();
+                    return ctx.reply('A sefer with this name was just added. Send /sefers to start again.');
+                }
+                throw err;
+            }
+        } else {
+            id = pick.target.id;
+        }
+        await writeNearby(id, [...pick.chosen]);
+        pending.delete(ctx.from.id);
+        await ctx.answerCallbackQuery();
+        const saved = pick.target.mode === 'new'
+            ? `Saved: ${pick.target.name} in ${pick.target.subCity}`
+            : `Nearby sefers saved for ${pick.target.name}`;
+        const n = pick.chosen.size;
+        return ctx.editMessageText(`${saved}, with ${n} nearby sefer(s).`, {
+            reply_markup: new InlineKeyboard().text('Edit nearby', `sf:nby:${id}`).text('Open sefer', `sf:view:${id}`),
+        });
     });
 
     bot.callbackQuery(/^sf:cty:([^:]+)$/, async (ctx) => {
@@ -419,60 +415,65 @@ export function registerSeferHandlers(bot: Bot) {
         return ctx.editMessageText(`${s.name}: ${status === 'APPROVED' ? 'approved' : 'rejected'}.`);
     });
 
-    // Typed answers: the add name, the rename, and the new sefer inside the picker.
+    // Typed answers: the name of a new sefer, or the new name of a sefer.
     bot.on('message:text', async (ctx, next) => {
-        const text = ctx.message.text.trim();
-        const pick = pickers.get(ctx.from.id);
         const p = pending.get(ctx.from.id);
-        if (!pick && !p) return next();
+        if (!p) return next();
+        const text = ctx.message.text.trim();
         if (text.startsWith('/')) {
             pending.delete(ctx.from.id);
-            pickers.delete(ctx.from.id);
             return next();
         }
         if (!isAdmin(ctx)) {
             pending.delete(ctx.from.id);
-            pickers.delete(ctx.from.id);
             return next();
         }
 
-        if (pick && pick.awaiting === 'newName') {
-            const name = text.replace(/\s+/g, ' ').slice(0, 40);
-            if (name.length < 2) return ctx.reply('Please type a name with at least 2 characters.');
-            const { rows } = await pool.query(`SELECT 1 FROM "Sefer" WHERE lower(name) = lower($1)`, [name]);
-            if (rows[0]) return ctx.reply('A sefer with this name already exists. Tap it in the list instead.');
-            pick.awaiting = 'newCity';
-            pick.newName = name;
-            return ctx.reply(`Which sub-city is ${name} in?`, { reply_markup: subCityKeyboard('sf:pcity') });
-        }
-
-        if (pick) return ctx.reply('Tap a button above, or send /cancel to stop.');
-
-        if (p?.kind === 'addName') {
+        if (p.kind === 'addName') {
             const name = text.replace(/\s+/g, ' ').slice(0, 40);
             if (name.length < 2) return ctx.reply('Please type a name with at least 2 characters.');
             const { rows } = await pool.query(`SELECT 1 FROM "Sefer" WHERE lower(name) = lower($1)`, [name]);
             if (rows[0]) return ctx.reply('A sefer with this name already exists. Type a different name.');
-            pending.set(ctx.from.id, { kind: 'addCity', name });
-            return ctx.reply(`Which sub-city is ${name} in?`, { reply_markup: subCityKeyboard('sf:addcity') });
+            const pick: Pick = {
+                target: { mode: 'new', name, subCity: p.subCity },
+                candidates: await loadCandidates(p.subCity, null, []),
+                chosen: new Set(),
+            };
+            pending.set(ctx.from.id, { kind: 'pick', pick });
+            return ctx.reply(pickTitle(pick), { reply_markup: pickKeyboard(pick) });
         }
 
-        if (p?.kind === 'addCity') return ctx.reply('Tap the sub-city above, or send /cancel to stop.');
+        if (p.kind === 'pick') {
+            return ctx.reply('Tap the sefers above, then Done. Send /cancel to stop.');
+        }
 
-        if (p?.kind === 'rename') {
+        if (p.kind === 'pickNew') {
             const name = text.replace(/\s+/g, ' ').slice(0, 40);
             if (name.length < 2) return ctx.reply('Please type a name with at least 2 characters.');
-            try {
-                await pool.query(`UPDATE "Sefer" SET name = $2 WHERE id = $1`, [p.id, name]);
-            } catch (err) {
-                if ((err as { code?: string }).code === '23505') {
-                    return ctx.reply('A sefer with this name already exists. Type a different name.');
-                }
-                throw err;
-            }
-            pending.delete(ctx.from.id);
-            return ctx.reply(`Saved: ${name}.`);
+            const { rows } = await pool.query(`SELECT 1 FROM "Sefer" WHERE lower(name) = lower($1)`, [name]);
+            if (rows[0]) return ctx.reply('A sefer with this name already exists. Tap it in the list instead.');
+            pending.set(ctx.from.id, { kind: 'pickCity', pick: p.pick, name });
+            const kb = new InlineKeyboard();
+            KNOWN_SUB_CITIES.forEach((city, i) => kb.text(city, `sf:pcity:${i}`).row());
+            return ctx.reply(`Which sub-city is ${name} in?`, { reply_markup: kb });
         }
-        return next();
+
+        if (p.kind === 'pickCity') {
+            return ctx.reply('Tap the sub-city above, or send /cancel to stop.');
+        }
+
+        // Rename
+        const name = text.replace(/\s+/g, ' ').slice(0, 40);
+        if (name.length < 2) return ctx.reply('Please type a name with at least 2 characters.');
+        try {
+            await pool.query(`UPDATE "Sefer" SET name = $2 WHERE id = $1`, [p.id, name]);
+        } catch (err) {
+            if ((err as { code?: string }).code === '23505') {
+                return ctx.reply('A sefer with this name already exists. Type a different name.');
+            }
+            throw err;
+        }
+        pending.delete(ctx.from.id);
+        return ctx.reply(`Saved: ${name}.`);
     });
 }
