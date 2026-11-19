@@ -35,7 +35,8 @@ export const ADMIN_COMMANDS = [
     { command: 'leaverequests', description: 'Leave requests waiting for approval' },
     { command: 'feedbacks', description: 'Latest feedback' },
     { command: 'auditlogs', description: 'Recent account lifecycle audit events' },
-    { command: 'stats', description: 'Counts for tutors, businesses and offers' },
+    { command: 'stats', description: 'Counts for tutors, businesses, parents and offers' },
+    { command: 'parents', description: 'Parent contacts and their requests' },
     { command: 'help', description: 'List admin functions' },
 ];
 
@@ -54,7 +55,8 @@ export const ADMIN_HELP = [
     '/leaverequests - leave requests waiting for approval',
     '/feedbacks - latest feedback from tutors and businesses',
     '/auditlogs - recent account lifecycle events (no personal identifiers)',
-    '/stats - counts for tutors, businesses and offers',
+    '/stats - counts for tutors, businesses, parents and offers',
+    '/parents - parent contacts and their latest requests',
     '/admin - show the admin menu',
     '/help - show this list',
 ].join('\n');
@@ -137,18 +139,65 @@ async function listAgencies(ctx: Context) {
     return ctx.reply(lines.join('\n\n'));
 }
 
+// Latest parents with their contact and most recent request. Admin-only views.
+async function parentRows(limit: number) {
+    const { rows } = await pool.query(
+        `SELECT p."contactHandle", p."telegramUsername", p."createdAt",
+                (SELECT count(*)::int FROM "ParentRequest" r WHERE r."parentId" = p.id) AS requests,
+                (SELECT r.status FROM "ParentRequest" r WHERE r."parentId" = p.id
+                 ORDER BY r."createdAt" DESC LIMIT 1) AS "lastStatus",
+                (SELECT r."gradeLevel" || ', ' || r."subCity" FROM "ParentRequest" r WHERE r."parentId" = p.id
+                 ORDER BY r."createdAt" DESC LIMIT 1) AS "lastRequest"
+         FROM "Parent" p
+         ORDER BY p."createdAt" DESC
+         LIMIT $1`,
+        [limit]
+    );
+    return rows;
+}
+
+function parentLine(p: { contactHandle: string | null; telegramUsername: string | null; requests: number; lastStatus: string | null; lastRequest: string | null }, i: number) {
+    const contact = p.contactHandle ?? 'no contact on file';
+    const user = p.telegramUsername ? ` · @${p.telegramUsername}` : '';
+    const last = p.lastRequest ? `last: ${p.lastRequest} (${p.lastStatus ?? '-'})` : 'no requests yet';
+    return `${i + 1}. ${contact}${user}\n   ${p.requests} request(s) · ${last}`;
+}
+
+async function showParents(ctx: Context, limit: number) {
+    const rows = await parentRows(limit);
+    if (rows.length === 0) return ctx.reply('No parents yet.');
+    return ctx.reply(
+        `Latest parents (${rows.length}, newest first)\n\n` + rows.map((p, i) => parentLine(p, i)).join('\n\n')
+    );
+}
+
 async function showStats(ctx: Context) {
     const { rows } = await pool.query(`
         SELECT (SELECT count(*)::int FROM "TelegramSubscriber") AS tutors,
                (SELECT count(*)::int FROM "TelegramSubscriber" WHERE status = 'ACTIVE') AS "activeTutors",
                (SELECT count(*)::int FROM "Organization") AS agencies,
                (SELECT count(*)::int FROM "TutoringOffer" WHERE status = 'OPEN') AS "openOffers",
-               (SELECT count(*)::int FROM "TutoringOffer" WHERE status = 'OPEN' AND "postFailures" >= $1) AS paused
+               (SELECT count(*)::int FROM "TutoringOffer" WHERE status = 'OPEN' AND "postFailures" >= $1) AS paused,
+               (SELECT count(*)::int FROM "Parent") AS parents,
+               (SELECT count(DISTINCT "parentId")::int FROM "ParentRequest" WHERE "parentId" IS NOT NULL) AS "parentsWithRequests",
+               (SELECT count(*)::int FROM "ParentRequest") AS requests,
+               (SELECT count(*)::int FROM "ParentRequest" WHERE status = 'OPEN') AS "requestsWaiting",
+               (SELECT count(*)::int FROM "ParentRequest" WHERE status = 'PLACED') AS "requestsPlaced"
     `, [MAX_POST_FAILURES]);
     const s = rows[0];
+    const latest = await parentRows(5);
+    const latestText = latest.length === 0
+        ? 'none yet'
+        : '\n' + latest.map((p, i) => parentLine(p, i)).join('\n');
     return ctx.reply(
-        `Stats\n\nTutors: ${s.tutors} (${s.activeTutors} active)\nBusinesses: ${s.agencies}\n` +
-        `Open offers: ${s.openOffers}\nPaused offers: ${s.paused}`
+        `Stats\n\n` +
+        `Tutors: ${s.tutors} (${s.activeTutors} active)\n` +
+        `Businesses: ${s.agencies}\n` +
+        `Open offers: ${s.openOffers}\n` +
+        `Paused offers: ${s.paused}\n\n` +
+        `Parents: ${s.parents} (${s.parentsWithRequests} with requests)\n` +
+        `Requests: ${s.requests} total, ${s.requestsWaiting} waiting for an agency, ${s.requestsPlaced} placed\n\n` +
+        `Latest parents:${latestText}`
     );
 }
 
@@ -179,6 +228,7 @@ export async function showAdminMenu(ctx: Context) {
             .text('Stats', 'adm:stats')
             .row()
             .text('Paused offers', 'adm:paused')
+            .text('Parents', 'adm:parents')
             .text('Help', 'adm:help'),
     });
 }
@@ -202,6 +252,7 @@ export function registerAdminHandlers(bot: Bot) {
     bot.command('admin', adminOnly(showAdminMenu));
     bot.command('agencies', adminOnly(listAgencies));
     bot.command('stats', adminOnly(showStats));
+    bot.command('parents', adminOnly((ctx) => showParents(ctx, 20)));
     bot.command('pausedoffers', adminOnly(listPaused));
 
     // CREATE
@@ -418,6 +469,7 @@ export function registerAdminHandlers(bot: Bot) {
     // Menu buttons
     bot.callbackQuery('adm:agencies', adminCallback(async (ctx) => { await ctx.answerCallbackQuery(); return listAgencies(ctx); }));
     bot.callbackQuery('adm:stats', adminCallback(async (ctx) => { await ctx.answerCallbackQuery(); return showStats(ctx); }));
+    bot.callbackQuery('adm:parents', adminCallback(async (ctx) => { await ctx.answerCallbackQuery(); return showParents(ctx, 20); }));
     bot.callbackQuery('adm:paused', adminCallback(async (ctx) => { await ctx.answerCallbackQuery(); return listPaused(ctx); }));
     bot.callbackQuery('adm:help', adminCallback(async (ctx) => { await ctx.answerCallbackQuery(); return ctx.reply(ADMIN_HELP); }));
 }
