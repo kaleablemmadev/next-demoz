@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { pool } from './db.js';
 import { notifyUpdatedOffer } from './alerts.js';
 import { offerButtons, refreshOfferPosts, setRepostStopped } from './reposts.js';
+import { countsLine } from './apply.js';
 import { isAdmin } from './admin.js';
 import {
     DIRECT_ORG_ID,
@@ -384,6 +385,8 @@ type ManagedOffer = {
     repostEveryDays: number;
     repostStopped: boolean;
     applied: number;
+    tooFar: number;
+    lowSalary: number;
 };
 
 const REPOST_CHOICES = [1, 2, 3, 5, 7];
@@ -393,7 +396,7 @@ function manageText(o: ManagedOffer): string {
     const repost = o.repostStopped
         ? 'Reposting paused'
         : `Reposted every ${o.repostEveryDays} day${o.repostEveryDays === 1 ? '' : 's'}`;
-    return `${o.title}\n${o.subCity} · ${Number(o.salaryAmountEtb).toLocaleString()} ETB ${pay}\n${repost}\nApplied: ${o.applied} tutor(s)`;
+    return `${o.title}\n${o.subCity} · ${Number(o.salaryAmountEtb).toLocaleString()} ETB ${pay}\n${repost}\n${countsLine(o)}`;
 }
 
 function manageKeyboard(o: ManagedOffer): InlineKeyboard {
@@ -763,7 +766,9 @@ export function registerAgencyHandlers(bot: Bot) {
         const { rows } = await pool.query<ManagedOffer>(
             `SELECT t.id, t.title, t."subCity", t."salaryUnit", t."salaryAmountEtb",
                     t."repostEveryDays", t."repostStopped",
-                    (SELECT count(*)::int FROM "OfferApplication" a WHERE a."offerId" = t.id) AS applied
+                    (SELECT count(*)::int FROM "OfferApplication" a WHERE a."offerId" = t.id) AS applied,
+                    (SELECT count(*)::int FROM "OfferResponse" r WHERE r."offerId" = t.id AND r.kind = 'TOO_FAR') AS "tooFar",
+                    (SELECT count(*)::int FROM "OfferResponse" r WHERE r."offerId" = t.id AND r.kind = 'LOW_SALARY') AS "lowSalary"
              FROM "TutoringOffer" t
              JOIN "Organization" o ON o.id = t."organizationId"
              WHERE o."telegramUserId" = $1 AND t.status = 'OPEN'
@@ -1092,7 +1097,7 @@ async function showOpenDirectOffers(reply: Reply) {
     if (offers.length === 0) return reply('You have no open offers sent to tutors.');
     for (const o of offers) {
         const pay = `${Number(o.salaryAmountEtb).toLocaleString()} ETB ${o.salaryUnit === 'HOUR' ? 'per hour' : 'per month'}`;
-        await reply(`${o.title}\n${o.subCity} · ${pay}\nApplied: ${o.applied} tutor(s)`, {
+        await reply(`${o.title}\n${o.subCity} · ${pay}\n${countsLine(o)}`, {
             reply_markup: new InlineKeyboard().text('Close this offer', `adm:close:${o.id}`),
         });
     }
