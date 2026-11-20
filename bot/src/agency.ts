@@ -383,6 +383,7 @@ type ManagedOffer = {
     salaryAmountEtb: number;
     repostEveryDays: number;
     repostStopped: boolean;
+    applied: number;
 };
 
 const REPOST_CHOICES = [1, 2, 3, 5, 7];
@@ -392,7 +393,7 @@ function manageText(o: ManagedOffer): string {
     const repost = o.repostStopped
         ? 'Reposting paused'
         : `Reposted every ${o.repostEveryDays} day${o.repostEveryDays === 1 ? '' : 's'}`;
-    return `${o.title}\n${o.subCity} · ${Number(o.salaryAmountEtb).toLocaleString()} ETB ${pay}\n${repost}`;
+    return `${o.title}\n${o.subCity} · ${Number(o.salaryAmountEtb).toLocaleString()} ETB ${pay}\n${repost}\nApplied: ${o.applied} tutor(s)`;
 }
 
 function manageKeyboard(o: ManagedOffer): InlineKeyboard {
@@ -761,7 +762,8 @@ export function registerAgencyHandlers(bot: Bot) {
     bot.command('myoffers', async (ctx) => {
         const { rows } = await pool.query<ManagedOffer>(
             `SELECT t.id, t.title, t."subCity", t."salaryUnit", t."salaryAmountEtb",
-                    t."repostEveryDays", t."repostStopped"
+                    t."repostEveryDays", t."repostStopped",
+                    (SELECT count(*)::int FROM "OfferApplication" a WHERE a."offerId" = t.id) AS applied
              FROM "TutoringOffer" t
              JOIN "Organization" o ON o.id = t."organizationId"
              WHERE o."telegramUserId" = $1 AND t.status = 'OPEN'
@@ -1090,7 +1092,7 @@ async function showOpenDirectOffers(reply: Reply) {
     if (offers.length === 0) return reply('You have no open offers sent to tutors.');
     for (const o of offers) {
         const pay = `${Number(o.salaryAmountEtb).toLocaleString()} ETB ${o.salaryUnit === 'HOUR' ? 'per hour' : 'per month'}`;
-        await reply(`${o.title}\n${o.subCity} · ${pay}`, {
+        await reply(`${o.title}\n${o.subCity} · ${pay}\nApplied: ${o.applied} tutor(s)`, {
             reply_markup: new InlineKeyboard().text('Close this offer', `adm:close:${o.id}`),
         });
     }

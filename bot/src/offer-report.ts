@@ -3,6 +3,7 @@
 import { Bot } from 'grammy';
 import { pool } from './db.js';
 import { areasNear } from '../../shared/rules/nearby-areas.js';
+import { applicationCount } from './apply.js';
 
 type Offer = {
     id: string;
@@ -93,6 +94,7 @@ async function reportFor(bot: Bot, o: Offer, tutors: Tutor[]) {
         '',
         postedLine,
         `Sent to ${sent} matching tutor(s) so far.`,
+        `${await applicationCount(o.id)} tutor(s) tapped "I applied".`,
     ];
     if (tips.length > 0) {
         lines.push('', 'Tips to get more tutors:', ...tips.map((t) => `• ${t}`));

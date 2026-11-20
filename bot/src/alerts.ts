@@ -4,6 +4,7 @@ import { Api, Bot } from 'grammy';
 import { pool } from './db.js';
 import { areasNear } from '../../shared/rules/nearby-areas.js';
 import { offerCardText, payLine, summaryLine, type CardOffer } from './card.js';
+import { applyKeyboard } from './apply.js';
 
 export type AlertOffer = CardOffer & {
     id: string;
@@ -70,7 +71,7 @@ export async function sendOfferAlerts(bot: Bot, offer: AlertOffer): Promise<numb
             const sub = subscribers[index];
 
             try {
-                await bot.api.sendMessage(sub.telegramId, text);
+                await bot.api.sendMessage(sub.telegramId, text, { reply_markup: applyKeyboard(offer.id) });
             } catch (err) {
                 // Usually means the tutor blocked the bot. Skip them and carry on.
                 console.error(`Could not message ${sub.telegramId}:`, err);

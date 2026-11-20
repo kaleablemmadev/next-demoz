@@ -106,13 +106,14 @@ export async function deleteTemplate(id: string): Promise<string | null> {
 }
 
 export async function listOpenDirectOffers(): Promise<
-    { id: string; title: string; subCity: string; salaryAmountEtb: number; salaryUnit: string }[]
+    { id: string; title: string; subCity: string; salaryAmountEtb: number; salaryUnit: string; applied: number }[]
 > {
     const { rows } = await pool.query(
-        `SELECT id, title, "subCity", "salaryAmountEtb", "salaryUnit"
-         FROM "TutoringOffer"
-         WHERE "organizationId" = $1 AND status = 'OPEN'
-         ORDER BY "postedAt" DESC
+        `SELECT t.id, t.title, t."subCity", t."salaryAmountEtb", t."salaryUnit",
+                (SELECT count(*)::int FROM "OfferApplication" a WHERE a."offerId" = t.id) AS applied
+         FROM "TutoringOffer" t
+         WHERE t."organizationId" = $1 AND t.status = 'OPEN'
+         ORDER BY t."postedAt" DESC
          LIMIT 10`,
         [DIRECT_ORG_ID]
     );
