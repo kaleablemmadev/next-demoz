@@ -6,6 +6,7 @@ import { pool } from './db.js';
 import { notifyUpdatedOffer } from './alerts.js';
 import { offerButtons, refreshOfferPosts, setRepostStopped } from './reposts.js';
 import { countsLine } from './apply.js';
+import { approvedLocations, cleanName, resolvePlace } from './places.js';
 import { isAdmin } from './admin.js';
 import {
     DIRECT_ORG_ID,
@@ -68,6 +69,7 @@ type Draft = {
     gender?: Gender;
     requirements?: string | null;
     seferId?: string | null; // the offer's sefer, if one was picked
+    locationId?: string | null; // the specific location inside the sefer
     seferChoices?: { id: string; name: string }[]; // approved sefers in the chosen sub-city
     adminMode?: boolean; // admin offer sent to tutors only
     contact?: string | null; // admin offers: username tutors contact
@@ -259,10 +261,20 @@ async function ask(reply: Reply, d: Draft) {
             return reply('Which sub-city?', {
                 reply_markup: choices('area', KNOWN_SUB_CITIES.map((c) => [c, c] as [string, string]), d.id, 3),
             });
-        case 'location':
-            return reply('Optional: type a location detail, such as a nearby landmark. Or tap Skip.', {
-                reply_markup: new InlineKeyboard().text('Skip', `ag:skip:${d.id}:location`),
+        case 'location': {
+            // Required: a specific location inside the sefer. Approved ones are buttons; anything typed goes to the admin.
+            const places = d.seferId ? await approvedLocations(d.seferId) : [];
+            const kb = new InlineKeyboard();
+            places.forEach((p, i) => {
+                kb.text(p.name, `ag:loc:${d.id}:${p.id}`);
+                if (i % 2 === 1) kb.row();
             });
+            return reply(
+                (places.length ? 'Pick the specific location, or type a new one. ' : 'Type the specific location, for example a landmark or street. ') +
+                'A new one is sent to the admin for review.',
+                { reply_markup: kb }
+            );
+        }
         case 'sessions':
             return reply('Sessions per week?', {
                 reply_markup: choices('sess', [['2', '2'], ['3', '3'], ['4', '4'], ['5', '5']], d.id, 4),
@@ -340,7 +352,7 @@ async function saveOfferEdit(api: Api, d: Draft): Promise<boolean> {
                 title = $2, "gradeLevel" = $3, "gradeLevels" = $4, "subject" = $5, subjects = $6,
                 "subCity" = $7, "locationDetail" = $8, "monthlySalaryEtb" = $9, "salaryUnit" = $10,
                 "salaryAmountEtb" = $11, "sessionHours" = $12, "sessionsPerWeek" = $13,
-                "preferredTutorGender" = $14, requirements = $15, "seferId" = $16
+                "preferredTutorGender" = $14, requirements = $15, "seferId" = $16, "locationId" = $17
             WHERE id = $1 AND status = 'OPEN'
             RETURNING id, "organizationId"
          )
@@ -367,6 +379,7 @@ async function saveOfferEdit(api: Api, d: Draft): Promise<boolean> {
             d.gender ?? null,
             d.requirements ?? null,
             d.seferId ?? null,
+            d.locationId ?? null,
         ]
     );
     if (!rowCount) return false;
@@ -587,8 +600,32 @@ export function registerAgencyHandlers(bot: Bot) {
         await ask(replyTo(ctx), d);
     });
 
-    // Skip buttons for the optional steps.
-    bot.callbackQuery(/^ag:skip:([^:]+):(location|requirements)$/, async (ctx) => {
+    // Picking an approved specific location.
+    bot.callbackQuery(/^ag:loc:([^:]+):([^:]+)$/, async (ctx) => {
+        const d = drafts.get(ctx.from.id);
+        if (!d) {
+            await ctx.answerCallbackQuery();
+            return ctx.reply('Send /new to start a new offer.');
+        }
+        const [, sessionId, locationId] = ctx.match as RegExpMatchArray;
+        if (sessionId !== d.id || d.step !== 'location' || !d.seferId) {
+            await ctx.answerCallbackQuery({ text: 'This step has expired.' });
+            return;
+        }
+        const { rows } = await pool.query<{ name: string }>(
+            `SELECT name FROM "SpecificLocation" WHERE id = $1 AND "seferId" = $2 AND status = 'APPROVED'`,
+            [locationId, d.seferId]
+        );
+        if (!rows[0]) { await ctx.answerCallbackQuery({ text: 'That location is no longer available.' }); return; }
+        d.locationId = locationId;
+        d.locationDetail = rows[0].name;
+        d.step = 'sessions';
+        await ctx.answerCallbackQuery();
+        await ask(replyTo(ctx), d);
+    });
+
+    // Skip buttons for the optional steps (the location step is required).
+    bot.callbackQuery(/^ag:skip:([^:]+):(requirements)$/, async (ctx) => {
         const d = drafts.get(ctx.from.id);
         if (!d) {
             await ctx.answerCallbackQuery();
@@ -648,8 +685,8 @@ export function registerAgencyHandlers(bot: Bot) {
                      ("organizationId", "title", "gradeLevel", "gradeLevels", "subject", "subjects",
                       "subCity", "locationDetail", "monthlySalaryEtb", "salaryUnit",
                       "salaryAmountEtb", "sessionHours", "sessionsPerWeek",
-                      "preferredTutorGender", "requirements", "seferId", "status")
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'OPEN')
+                      "preferredTutorGender", "requirements", "seferId", "locationId", "status")
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'OPEN')
                      RETURNING id, "organizationId"
                  )
                  INSERT INTO "AuditEvent"
@@ -675,6 +712,7 @@ export function registerAgencyHandlers(bot: Bot) {
                     d.gender ?? null,
                     d.requirements ?? null,
                     d.seferId ?? null,
+                    d.locationId ?? null,
                 ]
             );
         } catch (err) {
@@ -952,7 +990,17 @@ export function registerAgencyHandlers(bot: Bot) {
         }
 
         if (d.step === 'location') {
-            d.locationDetail = text.slice(0, 200) || null;
+            const name = cleanName(text);
+            if (name.length < 2) return ctx.reply('Please type a location with at least 2 characters.');
+            if (!d.seferId) {
+                d.locationDetail = name;
+                d.locationId = null;
+            } else {
+                const place = await resolvePlace({ kind: 'LOCATION', typed: name, telegramId: ctx.from.id, seferId: d.seferId });
+                d.locationId = place.id;
+                d.locationDetail = place.name;
+                if (place.created) await ctx.reply(`"${place.name}" was sent to the admin for review. Your offer is saved with it now.`);
+            }
             d.step = 'sessions';
             return ask(replyTo(ctx), d);
         }
