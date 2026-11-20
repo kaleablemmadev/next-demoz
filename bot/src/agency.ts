@@ -321,12 +321,14 @@ async function ask(reply: Reply, d: Draft) {
         case 'confirm':
             if (d.adminMode) {
                 return reply(
-                    `Please check the offer. It goes to matching tutors only and is not posted in any group or channel:\n\n${offerLines(d).join('\n')}`,
+                    `Please check the offer. It goes to matching tutors only and is not posted in any group or channel:\n\n${offerLines(d).join('\n')}\n\n` +
+                    `Layout: ${d.postTemplate ? 'a saved template' : 'default'}`,
                     {
                         reply_markup: new InlineKeyboard()
                             .text('Send to tutors', `adm:send:${d.id}`)
-                            .text('Edit', `ag:post:edit:${d.id}`)
+                            .text('Choose template', 'adm:tpl')
                             .row()
+                            .text('Edit', `ag:post:edit:${d.id}`)
                             .text('Cancel', `ag:post:no:${d.id}`),
                     }
                 );
@@ -1224,7 +1226,7 @@ function registerDirectOfferHandlers(bot: Bot) {
         await ctx.answerCallbackQuery();
         const templates = await listTemplates();
         if (templates.length === 0) {
-            return ctx.reply('No saved templates yet. Save one from the preview of an offer with "Save as template".');
+            return ctx.reply('No saved templates yet. Use "New template" to create one.');
         }
         const kb = new InlineKeyboard();
         for (const t of templates) kb.text(t.name, `adm:use:${t.id}`).row();
@@ -1265,6 +1267,41 @@ function registerDirectOfferHandlers(bot: Bot) {
         const closed = await closeDirectOffer((ctx.match as RegExpMatchArray)[1]);
         await ctx.answerCallbackQuery({ text: closed ? 'Closed.' : 'This offer is already closed.' });
         return ctx.editMessageText(closed ? 'Closed.' : 'This offer was already closed.');
+    });
+
+    // At the confirm step: pick the layout from the saved templates, or use the default.
+    bot.callbackQuery('adm:tpl', async (ctx) => {
+        if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
+        const d = drafts.get(ctx.from.id);
+        if (!d || !d.adminMode || d.step !== 'confirm') return ctx.answerCallbackQuery({ text: 'This form has expired.' });
+        const templates = await listTemplates();
+        await ctx.answerCallbackQuery();
+        const kb = new InlineKeyboard();
+        for (const t of templates) kb.text(t.name, `adm:tset:${t.id}`).row();
+        kb.text('Default layout', 'adm:tset:none');
+        return ctx.reply(
+            templates.length === 0
+                ? 'No saved templates yet. Use "New template" in /sendoffer to create one. The default layout will be used.'
+                : 'Which saved template should this offer use?',
+            { reply_markup: kb }
+        );
+    });
+
+    bot.callbackQuery(/^adm:tset:([^:]+)$/, async (ctx) => {
+        if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: adminOnly, show_alert: true });
+        const d = drafts.get(ctx.from.id);
+        if (!d || !d.adminMode || d.step !== 'confirm') return ctx.answerCallbackQuery({ text: 'This form has expired.' });
+        const choice = (ctx.match as RegExpMatchArray)[1];
+        if (choice === 'none') {
+            d.postTemplate = null;
+            await ctx.answerCallbackQuery({ text: 'Using the default layout.' });
+        } else {
+            const tpl = await getTemplate(choice);
+            if (!tpl) return ctx.answerCallbackQuery({ text: 'This template no longer exists.', show_alert: true });
+            d.postTemplate = tpl.layout;
+            await ctx.answerCallbackQuery({ text: `Using "${tpl.name}".` });
+        }
+        await ask(replyTo(ctx), d);
     });
 
     bot.callbackQuery(/^adm:send:([^:]+)$/, async (ctx) => {
