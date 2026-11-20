@@ -247,3 +247,37 @@ export async function mergeTargets(p: PendingPlace): Promise<{ id: string; name:
     );
     return rows;
 }
+
+// Admin: approve a pending place under a name the admin chooses. The wording the person typed becomes an alias for it.
+// Returns the saved name, 'DUPLICATE' when that name is already used in the same place, or null when already reviewed.
+export async function saveAs(kind: PlaceKind, pendingId: string, newName: string): Promise<string | null | 'DUPLICATE'> {
+    const name = cleanName(newName);
+    if (name.length < 2) return null;
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const table = kind === 'SEFER' ? '"Sefer"' : '"SpecificLocation"';
+        const { rows } = await client.query<{ typed: string }>(
+            `SELECT name AS typed FROM ${table} WHERE id = $1 AND status = 'PENDING' FOR UPDATE`,
+            [pendingId]
+        );
+        if (!rows[0]) { await client.query('ROLLBACK'); return null; }
+        await client.query(
+            `UPDATE ${table} SET name = $2, status = 'APPROVED', "reviewedAt" = now() WHERE id = $1`,
+            [pendingId, name]
+        );
+        await client.query(
+            `INSERT INTO "PlaceAlias" (kind, "typedName", "targetId") VALUES ($1, $2, $3)
+             ON CONFLICT (kind, "typedName") DO UPDATE SET "targetId" = EXCLUDED."targetId"`,
+            [kind, rows[0].typed.toLowerCase(), pendingId]
+        );
+        await client.query('COMMIT');
+        return name;
+    } catch (err) {
+        await client.query('ROLLBACK');
+        if ((err as { code?: string }).code === '23505') return 'DUPLICATE';
+        throw err;
+    } finally {
+        client.release();
+    }
+}

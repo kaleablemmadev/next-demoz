@@ -269,8 +269,9 @@ async function ask(reply: Reply, d: Draft) {
                 kb.text(p.name, `ag:loc:${d.id}:${p.id}`);
                 if (i % 2 === 1) kb.row();
             });
+            kb.row().text('Other: type my own', `ag:locother:${d.id}`);
             return reply(
-                (places.length ? 'Pick the specific location, or type a new one. ' : 'Type the specific location, for example a landmark or street. ') +
+                (places.length ? 'Pick a specific location, or tap Other and type yours. ' : 'Type the specific location, for example a landmark or street. ') +
                 'A new one is sent to the admin for review.',
                 { reply_markup: kb }
             );
@@ -598,6 +599,18 @@ export function registerAgencyHandlers(bot: Bot) {
 
         await ctx.answerCallbackQuery();
         await ask(replyTo(ctx), d);
+    });
+
+    // "Other": the next message is the agency's own location.
+    bot.callbackQuery(/^ag:locother:(.+)$/, async (ctx) => {
+        const d = drafts.get(ctx.from.id);
+        const sessionId = (ctx.match as RegExpMatchArray)[1];
+        if (!d || sessionId !== d.id || d.step !== 'location') {
+            await ctx.answerCallbackQuery({ text: 'This step has expired.' });
+            return;
+        }
+        await ctx.answerCallbackQuery();
+        await ctx.reply('Type the specific location now, for example a landmark or street.');
     });
 
     // Picking an approved specific location.

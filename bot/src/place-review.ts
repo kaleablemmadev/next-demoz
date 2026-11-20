@@ -7,7 +7,7 @@ import { Api, Bot, InlineKeyboard } from 'grammy';
 import { isAdmin } from './admin.js';
 import {
     approvePlace, approvedSefersIn, assignSefer, getPendingPlace, mergePlace, mergeTargets,
-    pendingPlaces, rejectPlace, type PendingPlace, type PlaceKind,
+    pendingPlaces, rejectPlace, saveAs, type PendingPlace, type PlaceKind,
 } from './places.js';
 
 const KIND: Record<string, PlaceKind> = { S: 'SEFER', L: 'LOCATION' };
@@ -15,7 +15,7 @@ const CODE: Record<PlaceKind, string> = { SEFER: 'S', LOCATION: 'L' };
 const ADMIN_ONLY = 'This is for the NextTutor admin only.';
 
 // An admin's choice in progress (merge or file under sefer). Kept here because the ids do not fit in one button.
-type Pick = { action: 'merge' | 'assign'; place: PendingPlace };
+type Pick = { action: 'merge' | 'assign' | 'saveas'; place: PendingPlace };
 const picking = new Map<number, Pick>();
 
 function label(p: PendingPlace): string {
@@ -27,7 +27,9 @@ function label(p: PendingPlace): string {
 function listKeyboard(p: PendingPlace): InlineKeyboard {
     const c = CODE[p.kind];
     const kb = new InlineKeyboard()
-        .text('Approve', `pl:ok:${c}:${p.id}`)
+        .text('Approve as typed', `pl:ok:${c}:${p.id}`)
+        .text('Save as…', `pl:sv:${c}:${p.id}`)
+        .row()
         .text('Merge into…', `pl:mg:${c}:${p.id}`);
     if (p.kind === 'LOCATION' && !p.seferId) kb.row().text('File under a sefer…', `pl:as:${p.id}`);
     kb.row().text('Reject', `pl:no:${c}:${p.id}`);
@@ -72,6 +74,17 @@ export function registerPlaceReviewHandlers(bot: Bot) {
         await ctx.answerCallbackQuery({ text: 'Approved.' });
         await ctx.editMessageText(`Approved: ${label(p)}`).catch(() => undefined);
         await notifyProposer(ctx.api, p, `The place "${p.name}" you sent was approved and is now available to everyone.`);
+    });
+
+    // Save under a name the admin chooses. The admin types the name next.
+    bot.callbackQuery(/^pl:sv:(S|L):(.+)$/, async (ctx) => {
+        if (!isAdmin(ctx)) return ctx.answerCallbackQuery({ text: ADMIN_ONLY, show_alert: true });
+        const [, code, id] = ctx.match as RegExpMatchArray;
+        const p = await getPendingPlace(KIND[code], id);
+        await ctx.answerCallbackQuery();
+        if (!p) return ctx.reply('Already reviewed.');
+        picking.set(ctx.from.id, { action: 'saveas', place: p });
+        await ctx.reply(`Type the name to save this ${p.kind === 'SEFER' ? 'sefer' : 'location'} as. People who typed "${p.name}" will be matched to it.`);
     });
 
     // Reject.
@@ -162,5 +175,21 @@ export function registerPlaceReviewHandlers(bot: Bot) {
         await ctx.answerCallbackQuery({ text: 'Filed.' });
         await ctx.editMessageText(`Filed "${pick.place.name}" under sefer "${result.seferName}". It is approved.`).catch(() => undefined);
         await notifyProposer(ctx.api, pick.place, `The location "${pick.place.name}" you sent was approved under sefer "${result.seferName}".`);
+    });
+
+    // The admin's typed name for a "Save as" action. Anything else passes on to the other handlers.
+    bot.on('message:text', async (ctx, next) => {
+        const pick = picking.get(ctx.from.id);
+        if (!pick || pick.action !== 'saveas' || !isAdmin(ctx)) return next();
+        const text = ctx.message.text.trim();
+        if (text.startsWith('/')) return next();
+        picking.delete(ctx.from.id);
+        const result = await saveAs(pick.place.kind, pick.place.id, text);
+        if (result === 'DUPLICATE') {
+            return ctx.reply(`"${text}" is already used in that place. Type another name, or run /places again to choose a different action.`);
+        }
+        if (!result) return ctx.reply('Already reviewed. Run /places to see what is still waiting.');
+        await ctx.reply(`Saved as "${result}". Anyone who typed "${pick.place.name}" will now be matched to it.`);
+        await notifyProposer(ctx.api, pick.place, `The place "${pick.place.name}" you sent was approved and saved as "${result}".`);
     });
 }
