@@ -9,6 +9,7 @@ import { applyKeyboard } from './apply.js';
 export type AlertOffer = CardOffer & {
     id: string;
     status: 'OPEN' | 'CLOSED';
+    seferId?: string | null;
 };
 
 type Subscriber = {
@@ -44,12 +45,20 @@ async function alertableSubscribers(offer: AlertOffer): Promise<Subscriber[]> {
             SELECT 1 FROM "OfferDelivery" d
             WHERE d."subscriberId" = s.id AND d."offerId" = $5
           )
+          -- Sefers the tutor turned down: "too far" hides all of them, "not enough salary" hides pay at or below the rejected amount.
+          AND NOT EXISTS (
+            SELECT 1 FROM "SeferExclusion" x
+            WHERE x."subscriberId" = s.id
+              AND x."seferId" = $6::text
+              AND (x.kind = 'TOO_FAR' OR (x.kind = 'LOW_SALARY' AND $3 <= x."salaryBelowEtb"))
+          )
     `, [
         areasNear(offer.subCity),
         offer.gradeLevels,
         offer.monthlySalaryEtb,
         offer.preferredTutorGender,
         offer.id,
+        offer.seferId ?? null,
     ]);
     return rows;
 }

@@ -14,6 +14,7 @@ export const TUTOR_COMMANDS = [
     { command: 'menu', description: 'Show the main menu' },
     { command: 'search', description: 'Search open offers' },
     { command: 'settings', description: 'Alert and notification settings' },
+    { command: 'turneddown', description: 'Sefers you turned down, with undo' },
     { command: 'gender', description: 'Change my gender' },
     { command: 'feedback', description: 'Send feedback to NextTutor' },
     { command: 'leave', description: 'Delete my NextTutor account' },

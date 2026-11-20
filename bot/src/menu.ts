@@ -23,6 +23,7 @@ const HELP_TEXT =
     '/menu - Show the main menu.\n' +
     '/search - Search open offers. Pick grades, areas and gender, then tap Show offers. Multi-select works, and All selects every option.\n' +
     '/settings - Pause, resume or stop offer alerts.\n' +
+    '/turneddown - Sefers you marked too far or low pay, with undo.\n' +
     '/gender - Change your gender. This affects which offers match you.\n' +
     '/feedback - Send feedback to the NextTutor team.\n' +
     '/leave - Delete your NextTutor account and personal data.\n' +

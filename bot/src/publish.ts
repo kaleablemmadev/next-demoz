@@ -8,7 +8,7 @@ export async function sendPendingAlerts(bot: Bot): Promise<void> {
     const { rows } = await pool.query<AlertOffer>(`
         SELECT t.id, t.title, t.subject, t.subjects, t."gradeLevels", t."subCity", t."locationDetail",
                t."sessionsPerWeek", t."sessionHours", t."salaryUnit", t."salaryAmountEtb",
-               t."monthlySalaryEtb", t."preferredTutorGender", t.requirements, t.status,
+               t."monthlySalaryEtb", t."preferredTutorGender", t.requirements, t.status, t."seferId",
                COALESCE(t."postTemplate", o."postTemplate") AS "postTemplate", o.name AS "agencyName",
                 COALESCE(t."contactUsername", o."telegramUsername") AS "agencyUsername"
                 FROM "TutoringOffer" t

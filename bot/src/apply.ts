@@ -114,6 +114,22 @@ export function registerApplyHandlers(bot: Bot) {
         );
 
         if (rows.length > 0) {
+            // Remember the turned-down sefer so future offers from it are filtered for this tutor.
+            // Offers without a sefer cannot be filtered, so they only count in the stats.
+            await pool.query(
+                `INSERT INTO "SeferExclusion" ("subscriberId", "seferId", kind, "salaryBelowEtb")
+                 SELECT s.id, t."seferId", $3::text,
+                        CASE WHEN $3::text = 'LOW_SALARY' THEN t."monthlySalaryEtb" END
+                 FROM "TelegramSubscriber" s
+                 JOIN "TutoringOffer" t ON t.id = $2
+                 WHERE s."telegramId" = $1 AND t."seferId" IS NOT NULL
+                 ON CONFLICT ("subscriberId", "seferId", kind) DO UPDATE
+                    SET "salaryBelowEtb" = CASE
+                        WHEN EXCLUDED.kind = 'LOW_SALARY'
+                        THEN GREATEST("SeferExclusion"."salaryBelowEtb", EXCLUDED."salaryBelowEtb")
+                        ELSE NULL END`,
+                [ctx.from.id, offerId, kind]
+            );
             await ctx.answerCallbackQuery({ text: 'Thanks. Your answer is recorded.' });
             return;
         }
@@ -130,5 +146,48 @@ export function registerApplyHandlers(bot: Bot) {
                 : 'This offer is closed or not available to you.',
             show_alert: prior.length === 0,
         });
+    });
+
+    // Tutors' turned-down sefers, with an undo button for each.
+    bot.command('turneddown', async (ctx) => {
+        const { rows } = await pool.query<{ seferId: string; kind: ResponseKind; name: string; salaryBelowEtb: string | null }>(
+            `SELECT x."seferId", x.kind, se.name, x."salaryBelowEtb"
+             FROM "SeferExclusion" x
+             JOIN "TelegramSubscriber" s ON s.id = x."subscriberId"
+             JOIN "Sefer" se ON se.id = x."seferId"
+             WHERE s."telegramId" = $1
+             ORDER BY se.name, x.kind`,
+            [ctx.from!.id]
+        );
+        if (rows.length === 0) {
+            return ctx.reply('You have not turned down any sefers. Offers you mark as too far or low pay will show here.');
+        }
+        await ctx.reply('Sefers you turned down. Tap Undo to see their offers again. Offers already sent to you are not sent again.');
+        for (const r of rows) {
+            const reason = r.kind === 'TOO_FAR'
+                ? 'Too far'
+                : `Pay at or below ${Number(r.salaryBelowEtb).toLocaleString()} ETB`;
+            await ctx.reply(`${r.name}\n${reason}`, {
+                reply_markup: new InlineKeyboard().text('Undo', `unx:${r.kind === 'TOO_FAR' ? 'far' : 'pay'}:${r.seferId}`),
+            });
+        }
+    });
+
+    bot.callbackQuery(new RegExp(`^unx:(far|pay):(.+)$`), async (ctx) => {
+        const [, code, seferId] = ctx.match as RegExpMatchArray;
+        const kind = RESPONSE_CODES[code];
+        const { rowCount } = await pool.query(
+            `DELETE FROM "SeferExclusion" x
+             USING "TelegramSubscriber" s
+             WHERE s.id = x."subscriberId" AND s."telegramId" = $1
+               AND x."seferId" = $2 AND x.kind = $3`,
+            [ctx.from.id, seferId, kind]
+        );
+        if ((rowCount ?? 0) > 0) {
+            await ctx.answerCallbackQuery({ text: 'Undone. Its offers can reach you again.' });
+            await ctx.editMessageText('Undone.').catch(() => undefined);
+        } else {
+            await ctx.answerCallbackQuery({ text: 'Already undone.' });
+        }
     });
 }
