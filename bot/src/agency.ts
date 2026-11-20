@@ -263,7 +263,7 @@ async function ask(reply: Reply, d: Draft) {
             });
         case 'location': {
             // Required: a specific location inside the sefer. Approved ones are buttons; anything typed goes to the admin.
-            const places = d.seferId ? await approvedLocations(d.seferId) : [];
+            const places = await approvedLocations(d.seferId ?? null, d.subCity ?? '');
             const kb = new InlineKeyboard();
             places.forEach((p, i) => {
                 kb.text(p.name, `ag:loc:${d.id}:${p.id}`);
@@ -608,14 +608,13 @@ export function registerAgencyHandlers(bot: Bot) {
             return ctx.reply('Send /new to start a new offer.');
         }
         const [, sessionId, locationId] = ctx.match as RegExpMatchArray;
-        if (sessionId !== d.id || d.step !== 'location' || !d.seferId) {
+        if (sessionId !== d.id || d.step !== 'location') {
             await ctx.answerCallbackQuery({ text: 'This step has expired.' });
             return;
         }
-        const { rows } = await pool.query<{ name: string }>(
-            `SELECT name FROM "SpecificLocation" WHERE id = $1 AND "seferId" = $2 AND status = 'APPROVED'`,
-            [locationId, d.seferId]
-        );
+        const allowed = await approvedLocations(d.seferId ?? null, d.subCity ?? '');
+        const chosen = allowed.find((p) => p.id === locationId);
+        const rows = chosen ? [{ name: chosen.name }] : [];
         if (!rows[0]) { await ctx.answerCallbackQuery({ text: 'That location is no longer available.' }); return; }
         d.locationId = locationId;
         d.locationDetail = rows[0].name;
@@ -992,15 +991,16 @@ export function registerAgencyHandlers(bot: Bot) {
         if (d.step === 'location') {
             const name = cleanName(text);
             if (name.length < 2) return ctx.reply('Please type a location with at least 2 characters.');
-            if (!d.seferId) {
-                d.locationDetail = name;
-                d.locationId = null;
-            } else {
-                const place = await resolvePlace({ kind: 'LOCATION', typed: name, telegramId: ctx.from.id, seferId: d.seferId });
-                d.locationId = place.id;
-                d.locationDetail = place.name;
-                if (place.created) await ctx.reply(`"${place.name}" was sent to the admin for review. Your offer is saved with it now.`);
-            }
+            const place = await resolvePlace({
+                kind: 'LOCATION',
+                typed: name,
+                telegramId: ctx.from.id,
+                subCity: d.subCity ?? '',
+                seferId: d.seferId ?? null,
+            });
+            d.locationId = place.id;
+            d.locationDetail = place.name;
+            if (place.created) await ctx.reply(`"${place.name}" was sent to the admin for review. Your offer is saved with it now.`);
             d.step = 'sessions';
             return ask(replyTo(ctx), d);
         }
