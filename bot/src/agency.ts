@@ -7,6 +7,7 @@ import { notifyUpdatedOffer } from './alerts.js';
 import { offerButtons, refreshOfferPosts, setRepostStopped } from './reposts.js';
 import { countsLine } from './apply.js';
 import { approvedLocations, cleanName, resolvePlace } from './places.js';
+import { sendAlertsNow } from './publish.js';
 import { isAdmin } from './admin.js';
 import {
     DIRECT_ORG_ID,
@@ -1160,7 +1161,7 @@ async function showOpenDirectOffers(reply: Reply) {
     if (offers.length === 0) return reply('You have no open offers sent to tutors.');
     for (const o of offers) {
         const pay = `${Number(o.salaryAmountEtb).toLocaleString()} ETB ${o.salaryUnit === 'HOUR' ? 'per hour' : 'per month'}`;
-        await reply(`${o.title}\n${o.subCity} · ${pay}\n${countsLine(o)}`, {
+        await reply(`${o.title}\n${o.subCity} · ${pay}\nSent: ${o.sent} tutor(s)\n${countsLine(o)}`, {
             reply_markup: new InlineKeyboard().text('Close this offer', `adm:close:${o.id}`),
         });
     }
@@ -1313,17 +1314,21 @@ function registerDirectOfferHandlers(bot: Bot) {
         }
         // Remove the draft first, so a second tap cannot send the same offer again.
         drafts.delete(ctx.from.id);
+        let offerId = '';
         try {
             const title = `Tutor (${listLabel(d.grades, GRADES, 'All Grades', 'Any grade')})`;
-            await insertDirectOffer({ ...templateFieldsOf(d), title, monthlySalaryEtb: monthlyOf(d), postTemplate: d.postTemplate ?? null });
+            offerId = await insertDirectOffer({ ...templateFieldsOf(d), title, monthlySalaryEtb: monthlyOf(d), postTemplate: d.postTemplate ?? null });
         } catch (err) {
             drafts.set(ctx.from.id, d);
             throw err;
         }
         await ctx.answerCallbackQuery();
+        await ctx.reply('Sending to matching tutors now…');
+        const sent = await sendAlertsNow(bot, offerId);
         return ctx.reply(
-            'Sent. Matching tutors will receive it within a few minutes. ' +
-            'It stays open until you close it with /directoffers.'
+            sent > 0
+                ? `Sent to ${sent} matching tutor(s). It stays open until you close it with /directoffers, where you can see how many applied, were too far, or wanted more pay.`
+                : 'No tutors match this offer yet. It stays open, and tutors who match later will receive it. See /directoffers.'
         );
     });
 }

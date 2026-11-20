@@ -6,6 +6,7 @@ import { sendOfferAlerts, type AlertOffer } from './alerts.js';
 // Each offer is handled on its own, so one failure doesn't block the rest.
 export async function sendPendingAlerts(bot: Bot): Promise<void> {
     const { rows } = await pool.query<AlertOffer>(`
+
         SELECT t.id, t.title, t.subject, t.subjects, t."gradeLevels", t."subCity", t."locationDetail",
                t."sessionsPerWeek", t."sessionHours", t."salaryUnit", t."salaryAmountEtb",
                t."monthlySalaryEtb", t."preferredTutorGender", t.requirements, t.status, t."seferId",
@@ -13,7 +14,7 @@ export async function sendPendingAlerts(bot: Bot): Promise<void> {
                 COALESCE(t."contactUsername", o."telegramUsername") AS "agencyUsername"
                 FROM "TutoringOffer" t
                  JOIN "Organization" o ON o.id = t."organizationId"
-        WHERE t."alertedAt" IS NULL AND t.status = 'OPEN'
+                WHERE t."alertedAt" IS NULL AND t.status = 'OPEN'
         ORDER BY t."postedAt" ASC
             LIMIT 20
     `);
@@ -32,4 +33,22 @@ export async function sendPendingAlerts(bot: Bot): Promise<void> {
             console.error(`Alerts failed for offer ${offer.id}:`, err);
         }
     }
+}
+
+// Sends the alerts for one offer now, so the admin can be told how many tutors got it. Returns how many were sent.
+export async function sendAlertsNow(bot: Bot, offerId: string): Promise<number> {
+    const { rows } = await pool.query<AlertOffer>(`
+        SELECT t.id, t.title, t.subject, t.subjects, t."gradeLevels", t."subCity", t."locationDetail",
+               t."sessionsPerWeek", t."sessionHours", t."salaryUnit", t."salaryAmountEtb",
+               t."monthlySalaryEtb", t."preferredTutorGender", t.requirements, t.status, t."seferId",
+               COALESCE(t."postTemplate", o."postTemplate") AS "postTemplate", o.name AS "agencyName",
+               COALESCE(t."contactUsername", o."telegramUsername") AS "agencyUsername"
+        FROM "TutoringOffer" t
+        JOIN "Organization" o ON o.id = t."organizationId"
+        WHERE t.id = $1 AND t."alertedAt" IS NULL AND t.status = 'OPEN'
+    `, [offerId]);
+    if (!rows[0]) return 0;
+    const sent = await sendOfferAlerts(bot, rows[0]);
+    await pool.query(`UPDATE "TutoringOffer" SET "alertedAt" = now() WHERE id = $1`, [offerId]);
+    return sent;
 }
