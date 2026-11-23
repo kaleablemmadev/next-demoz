@@ -364,7 +364,12 @@ async function finishSignup(
     const group = chats.find((chat) => chat.kind === 'GROUP');
     const channel = chats.find((chat) => chat.kind === 'CHANNEL');
 
-    const orgId = randomUUID();
+    // A trial business that registers keeps its row and its offers.
+    const { rows: trialRows } = await pool.query<{ id: string }>(
+        `SELECT id FROM "Organization" WHERE status = 'TRIAL' AND "telegramUserId" = $1 LIMIT 1`,
+        [Number(s.telegramId)]
+    );
+    const orgId = trialRows[0]?.id ?? randomUUID();
 
     await withTransaction(async (client) => {
         const { rows } = await client.query<{ auditRef: string }>(
@@ -382,6 +387,16 @@ async function finishSignup(
                 status
              )
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'PENDING_APPROVAL')
+             ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name,
+                "telegramUsername" = EXCLUDED."telegramUsername",
+                "telegramUserId" = EXCLUDED."telegramUserId",
+                "ownerUsername" = EXCLUDED."ownerUsername",
+                "paymentReference" = EXCLUDED."paymentReference",
+                "groupChatId" = EXCLUDED."groupChatId",
+                "channelChatId" = EXCLUDED."channelChatId",
+                "postDestination" = EXCLUDED."postDestination",
+                status = 'PENDING_APPROVAL'
              RETURNING "auditRef"`,
             [
                 orgId,

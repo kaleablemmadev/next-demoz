@@ -8,6 +8,7 @@ import { offerButtons, refreshOfferPosts, setRepostStopped } from './reposts.js'
 import { countsLine } from './apply.js';
 import { approvedLocations, cleanName, resolvePlace } from './places.js';
 import { sendAlertsNow } from './publish.js';
+import { trialLimitMessage, trialState } from './trial.js';
 import { isAdmin } from './admin.js';
 import {
     DIRECT_ORG_ID,
@@ -95,9 +96,9 @@ export function clearAgencySession(telegramId: number) {
 
 async function findAgency(telegramId: number, username: string | undefined) {
     const { rows } = await pool.query(
-        `SELECT id, name, "telegramUsername", "postTemplate"
+        `SELECT id, name, "telegramUsername", "postTemplate", status
      FROM "Organization"
-     WHERE status = 'ACTIVE'
+     WHERE status IN ('ACTIVE', 'TRIAL')
        AND ("telegramUserId" = $1 OR lower("telegramUsername") = lower($2))
      ORDER BY CASE WHEN "telegramUserId" = $1 THEN 0 ELSE 1 END
      LIMIT 1`,
@@ -483,6 +484,13 @@ export function registerAgencyHandlers(bot: Bot) {
         const agency = await findAgency(ctx.from!.id, ctx.from?.username);
         if (!agency) {
             return ctx.reply('This account is not registered as an agency.');
+        }
+        if (agency.status === 'TRIAL') {
+            const used = await trialState(agency.id);
+            if (used.atLimit) {
+                const limit = trialLimitMessage();
+                return ctx.reply(limit.text, { reply_markup: limit.kb });
+            }
         }
 
         templateDrafts.delete(ctx.from!.id);

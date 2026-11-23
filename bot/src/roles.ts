@@ -84,9 +84,9 @@ export async function findAgencyByUsername(username: string | undefined) {
 // Prefer the immutable Telegram user ID. Username is retained as a migration/fallback path.
 export async function findAgencyForUser(telegramId: number, username?: string) {
     const { rows } = await pool.query(
-        `SELECT id, name, "telegramUsername", "postTemplate"
+        `SELECT id, name, "telegramUsername", "postTemplate", status
          FROM "Organization"
-         WHERE status = 'ACTIVE'
+         WHERE status IN ('ACTIVE', 'TRIAL')
            AND ("telegramUserId" = $1 OR ($2::text IS NOT NULL AND lower("telegramUsername") = lower($2)))
          ORDER BY CASE WHEN "telegramUserId" = $1 THEN 0 ELSE 1 END
          LIMIT 1`,
@@ -198,8 +198,10 @@ export function registerRoleHandlers(
             await ctx.editMessageText(`Welcome, ${agency.name}.`);
             return showAgencyMenu(ctx);
         }
-        await ctx.editMessageText('Registering your tutoring business.');
-        return startBusinessSignup(ctx);
+        await ctx.editMessageText(
+            `Would you like to try NextTutor first? You can post 5 offers free, then register. Or register your business now.`,
+            { reply_markup: new InlineKeyboard().text('Post 5 free offers first', 'trial:start').row().text('Register my business now', 'trial:reg') }
+        );
     });
 
     bot.callbackQuery('role:parent', async (ctx) => {
