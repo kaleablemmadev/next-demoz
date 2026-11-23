@@ -4,17 +4,10 @@
 //
 // Settings (Render environment variables):
 //   GEMINI_API_KEY   required to switch the AI on
-//   GEMINI_MODEL     optional, defaults to gemini-2.5-flash
+//   GEMINI_MODEL     optional, a model name the key can use; otherwise the bot picks one from the key's list
 //   AI_DAILY_LIMIT   optional, requests per person per day, defaults to 30
 
 const API_KEY = process.env.GEMINI_API_KEY?.trim() || '';
-// Tried in order. The next name is used only when Gemini says the model does not exist (404).
-const MODELS = [
-    process.env.GEMINI_MODEL?.trim(),
-    'gemini-2.5-flash',
-    'gemini-2.0-flash',
-    'gemini-1.5-flash',
-].filter((m): m is string => Boolean(m));
 const DAILY_LIMIT = Number(process.env.AI_DAILY_LIMIT) || 30;
 const TIMEOUT_MS = 15_000;
 
@@ -53,6 +46,45 @@ export function redact(text: string): string {
         .replace(/(\+?\d[\d\s-]{7,}\d)/g, '[phone]');
 }
 
+// The model is looked up once from Gemini's list for this key, so a retired or renamed model does not break the bot.
+let modelCache: Promise<string | null> | null = null;
+
+async function chooseModel(): Promise<string | null> {
+    const wanted = process.env.GEMINI_MODEL?.trim();
+    try {
+        const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', {
+            headers: { 'x-goog-api-key': API_KEY },
+            signal: AbortSignal.timeout(TIMEOUT_MS),
+        });
+        if (!res.ok) {
+            console.error(`Gemini model list returned ${res.status}: ${(await res.text()).slice(0, 300)}`);
+            return null;
+        }
+        const body = (await res.json()) as { models?: { name: string; supportedGenerationMethods?: string[] }[] };
+        const usable = (body.models ?? [])
+            .filter((m) => m.supportedGenerationMethods?.includes('generateContent'))
+            .map((m) => m.name.replace(/^models\//, ''));
+        if (usable.length === 0) {
+            console.error('This Gemini key has no models that support generateContent');
+            return null;
+        }
+        if (wanted && usable.includes(wanted)) return wanted;
+        // Prefer stable flash models (highest version first), then any flash model, then anything usable.
+        const stableFlash = usable.filter((m) => /^gemini-[\d.]+-flash$/.test(m)).sort().reverse();
+        const chosen = stableFlash[0] ?? usable.find((m) => m.includes('flash')) ?? usable[0];
+        console.log(`Gemini model in use: ${chosen}`);
+        return chosen;
+    } catch (err) {
+        console.error('Could not list Gemini models:', err);
+        return null;
+    }
+}
+
+function activeModel(): Promise<string | null> {
+    if (!modelCache) modelCache = chooseModel();
+    return modelCache;
+}
+
 // Asks Gemini for JSON that matches the instructions. Returns null on any failure.
 export async function askJson<T>(opts: {
     system: string;
@@ -63,27 +95,23 @@ export async function askJson<T>(opts: {
     if (!withinDailyLimit(opts.userKey)) return null;
 
     try {
-        let res: Response | null = null;
-        for (const model of MODELS) {
-            res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'x-goog-api-key': API_KEY,
-                },
-                body: JSON.stringify({
-                    systemInstruction: { parts: [{ text: opts.system }] },
-                    contents: [{ role: 'user', parts: [{ text: redact(opts.prompt) }] }],
-                    generationConfig: { responseMimeType: 'application/json', temperature: 0.2 },
-                }),
-                signal: AbortSignal.timeout(TIMEOUT_MS),
-            });
-            if (res.status !== 404) break;
-            console.error(`Gemini model ${model} not found, trying the next name`);
-        }
-        if (!res || !res.ok) {
-            const detail = res ? (await res.text()).slice(0, 300) : 'no response';
-            console.error(`Gemini returned ${res?.status ?? 'nothing'}: ${detail}`);
+        const model = await activeModel();
+        if (!model) return null;
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-goog-api-key': API_KEY,
+            },
+            body: JSON.stringify({
+                systemInstruction: { parts: [{ text: opts.system }] },
+                contents: [{ role: 'user', parts: [{ text: redact(opts.prompt) }] }],
+                generationConfig: { responseMimeType: 'application/json', temperature: 0.2 },
+            }),
+            signal: AbortSignal.timeout(TIMEOUT_MS),
+        });
+        if (!res.ok) {
+            console.error(`Gemini returned ${res.status}: ${(await res.text()).slice(0, 300)}`);
             return null;
         }
         const body = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
