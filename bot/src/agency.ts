@@ -9,6 +9,7 @@ import { countsLine } from './apply.js';
 import { approvedLocations, cleanName, resolvePlace } from './places.js';
 import { sendAlertsNow } from './publish.js';
 import { trialLimitMessage, trialState } from './trial.js';
+import { extractQuickFields, firstMissing, quickPostAvailable, type QuickFields } from './quickpost.js';
 import { isAdmin } from './admin.js';
 import {
     DIRECT_ORG_ID,
@@ -81,6 +82,8 @@ const WEEKS_PER_MONTH = 4.33;
 
 // In-memory drafts. If the bot restarts mid-form, the agency sends /new again.
 const drafts = new Map<number, Draft>();
+// Agencies who sent /quick and will paste their offer next.
+const quickPaste = new Set<number>();
 const templateDrafts = new Map<number, string>();
 // Admin: a layout template being created (name first) or edited.
 type LayoutStep = { kind: 'new'; name?: string } | { kind: 'edit'; id: string };
@@ -247,6 +250,63 @@ function replyTo(ctx: Context): Reply {
 
 function privateReply(api: Api, chatId: number): Reply {
     return (text, other) => api.sendMessage(chatId, text, other as Parameters<Api['sendMessage']>[2]);
+}
+
+// Fills a new draft from a pasted offer, then asks only for what is still missing.
+async function handleQuickPaste(ctx: Context, text: string) {
+    const from = ctx.from!;
+    const agency = await findAgency(from.id, from.username);
+    if (!agency) return ctx.reply('This account is not registered as an agency.');
+
+    const fields: QuickFields | null = await extractQuickFields(text, `agency:${agency.id}`);
+    if (!fields) {
+        return ctx.reply('I could not read that offer. Please send /new to fill the form step by step.');
+    }
+
+    let locationId: string | null = null;
+    let locationDetail: string | null = null;
+    if (fields.locationDetail && fields.subCity) {
+        const place = await resolvePlace({
+            kind: 'LOCATION',
+            typed: fields.locationDetail,
+            telegramId: from.id,
+            subCity: fields.subCity,
+            seferId: null,
+        });
+        locationId = place.id;
+        locationDetail = place.name;
+    }
+
+    const missing = firstMissing(fields);
+    const draft: Draft = {
+        id: randomUUID(),
+        chatId: ctx.chat!.id,
+        editOfferId: null,
+        orgId: agency.id,
+        orgName: agency.name,
+        orgUsername: agency.telegramUsername,
+        postTemplate: agency.postTemplate ?? null,
+        step: missing ?? 'confirm',
+        grades: fields.grades,
+        subjects: fields.subjects,
+        subCity: fields.subCity ?? undefined,
+        locationId,
+        locationDetail,
+        sessionsPerWeek: fields.sessionsPerWeek ?? undefined,
+        unit: fields.unit ?? undefined,
+        amount: fields.amount ?? undefined,
+        sessionHours: fields.sessionHours ?? undefined,
+        gender: fields.gender ?? undefined,
+        requirements: fields.requirements,
+    };
+    drafts.set(from.id, draft);
+
+    await ctx.reply(
+        missing
+            ? 'I filled in what I could from your text. I still need a few details.'
+            : 'I filled in the offer from your text. Please check it before posting.'
+    );
+    await ask(replyTo(ctx), draft);
 }
 
 async function ask(reply: Reply, d: Draft) {
@@ -508,6 +568,22 @@ export function registerAgencyHandlers(bot: Bot) {
         };
         drafts.set(ctx.from!.id, draft);
         await ask(replyTo(ctx), draft);
+    });
+
+    // Paste-and-fill: the agency describes the offer in its own words.
+    bot.command('quick', async (ctx) => {
+        if (!quickPostAvailable()) return ctx.reply('Quick posting is not switched on yet. Send /new to fill the form.');
+        const agency = await findAgency(ctx.from!.id, ctx.from?.username);
+        if (!agency) return ctx.reply('This account is not registered as an agency.');
+        if (agency.status === 'TRIAL' && (await trialState(agency.id)).atLimit) {
+            const limit = trialLimitMessage();
+            return ctx.reply(limit.text, { reply_markup: limit.kb });
+        }
+        quickPaste.add(ctx.from!.id);
+        return ctx.reply(
+            'Describe the offer in your own words. Include the grade, subject, sub-city, place, sessions per week, ' +
+            'hours per session, and the pay (per month or per hour). I will fill the form and you confirm it before it is posted.'
+        );
     });
 
     // Grade multi-select.
@@ -894,6 +970,12 @@ export function registerAgencyHandlers(bot: Bot) {
     // Typed answers: optional location, pay amount, session hours, requirements.
     bot.on('message:text', async (ctx, next) => {
         const text = ctx.message.text.trim();
+
+        // Agency pasted an offer after /quick.
+        if (quickPaste.has(ctx.from.id) && !text.startsWith('/')) {
+            quickPaste.delete(ctx.from.id);
+            return handleQuickPaste(ctx, text);
+        }
 
         // Admin: a layout template being created or edited. The layout is checked like an agency /template.
         const layoutStep = templateLayoutDrafts.get(ctx.from.id);

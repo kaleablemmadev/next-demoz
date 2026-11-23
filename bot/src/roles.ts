@@ -25,6 +25,7 @@ export const TUTOR_COMMANDS = [
 export const AGENCY_COMMANDS = [
     { command: 'start', description: 'Open the agency menu' },
     { command: 'new', description: 'Post a new tutoring offer' },
+    { command: 'quick', description: 'Post an offer by describing it in your own words' },
     { command: 'template', description: 'Edit your offer post template' },
     { command: 'myoffers', description: 'Edit, repost settings and pause for your open offers' },
     { command: 'cancel', description: 'Cancel the current form' },
@@ -49,6 +50,7 @@ export const PARENT_COMMANDS = [
 export const AGENCY_HELP =
     'NextTutor agency functions\n\n' +
     '/new - Create and publish a tutoring offer.\n' +
+    '/quick - Describe an offer in your own words and confirm the filled form.\n' +
     '/myoffers - See your open offers. Change how often each is reposted, pause reposting, or edit it.\n' +
     '/template - Create or replace your reusable offer-post layout. Use supported placeholders such as {GRADES} and {MONTHLY_SALARY}.\n' +
     '/cancel - Cancel the current form or template edit.\n' +
