@@ -8,7 +8,13 @@
 //   AI_DAILY_LIMIT   optional, requests per person per day, defaults to 30
 
 const API_KEY = process.env.GEMINI_API_KEY?.trim() || '';
-const MODEL = process.env.GEMINI_MODEL?.trim() || 'gemini-2.5-flash';
+// Tried in order. The next name is used only when Gemini says the model does not exist (404).
+const MODELS = [
+    process.env.GEMINI_MODEL?.trim(),
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash',
+].filter((m): m is string => Boolean(m));
 const DAILY_LIMIT = Number(process.env.AI_DAILY_LIMIT) || 30;
 const TIMEOUT_MS = 15_000;
 
@@ -57,21 +63,27 @@ export async function askJson<T>(opts: {
     if (!withinDailyLimit(opts.userKey)) return null;
 
     try {
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'x-goog-api-key': API_KEY,
-            },
-            body: JSON.stringify({
-                systemInstruction: { parts: [{ text: opts.system }] },
-                contents: [{ role: 'user', parts: [{ text: redact(opts.prompt) }] }],
-                generationConfig: { responseMimeType: 'application/json', temperature: 0.2 },
-            }),
-            signal: AbortSignal.timeout(TIMEOUT_MS),
-        });
-        if (!res.ok) {
-            console.error(`Gemini returned ${res.status}`);
+        let res: Response | null = null;
+        for (const model of MODELS) {
+            res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-goog-api-key': API_KEY,
+                },
+                body: JSON.stringify({
+                    systemInstruction: { parts: [{ text: opts.system }] },
+                    contents: [{ role: 'user', parts: [{ text: redact(opts.prompt) }] }],
+                    generationConfig: { responseMimeType: 'application/json', temperature: 0.2 },
+                }),
+                signal: AbortSignal.timeout(TIMEOUT_MS),
+            });
+            if (res.status !== 404) break;
+            console.error(`Gemini model ${model} not found, trying the next name`);
+        }
+        if (!res || !res.ok) {
+            const detail = res ? (await res.text()).slice(0, 300) : 'no response';
+            console.error(`Gemini returned ${res?.status ?? 'nothing'}: ${detail}`);
             return null;
         }
         const body = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
