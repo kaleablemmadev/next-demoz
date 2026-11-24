@@ -118,13 +118,21 @@ export async function askJson<T>(opts: {
         const headers = { 'Content-Type': 'application/json', 'x-goog-api-key': API_KEY };
 
         // Each model is tried in order. An overloaded, rate-limited or missing model is retried once, then the next one is tried.
+        const call = (url: string) => fetch(url, { method: 'POST', headers, body: payload, signal: AbortSignal.timeout(TIMEOUT_MS) });
         let res: Response | null = null;
         for (const model of models) {
             const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-            res = await fetch(url, { method: 'POST', headers, body: payload, signal: AbortSignal.timeout(TIMEOUT_MS) });
-            if (res.status === 503 || res.status === 429) {
-                await new Promise((r) => setTimeout(r, 2000));
-                res = await fetch(url, { method: 'POST', headers, body: payload, signal: AbortSignal.timeout(TIMEOUT_MS) });
+            try {
+                res = await call(url);
+                if (res.status === 503 || res.status === 429) {
+                    await new Promise((r) => setTimeout(r, 2000));
+                    res = await call(url);
+                }
+            } catch (err) {
+                // A slow or dropped connection counts as a failed attempt, so the next model is tried.
+                console.error(`Gemini model ${model} did not answer in time, trying the next model`, err);
+                res = null;
+                continue;
             }
             if (res.ok || !OVERLOADED.has(res.status)) break;
             console.error(`Gemini model ${model} returned ${res.status}, trying the next model`);
