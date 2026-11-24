@@ -69,15 +69,19 @@ async function chooseModels(): Promise<string[]> {
             return [];
         }
         // GEMINI_MODEL first if usable; then stable flash models (newest first); then other flash; then the rest.
-        const stableFlash = usable.filter((m) => /^gemini-[\d.]+-flash$/.test(m)).sort().reverse();
-        const otherFlash = usable.filter((m) => m.includes('flash') && !stableFlash.includes(m));
+        const newestFirst = (a: string, b: string) => b.localeCompare(a, undefined, { numeric: true });
+        const stableFlash = usable.filter((m) => /^gemini-[\d.]+-flash$/.test(m)).sort(newestFirst);
+        const stableLite = usable.filter((m) => /^gemini-[\d.]+-flash-lite$/.test(m)).sort(newestFirst);
+        const otherFlash = usable.filter((m) => m.includes('flash') && !stableFlash.includes(m) && !stableLite.includes(m));
         const ordered = [
             ...(wanted && usable.includes(wanted) ? [wanted] : []),
             ...stableFlash,
+            ...stableLite,
             ...otherFlash,
             ...usable,
         ];
-        const candidates = [...new Set(ordered)].slice(0, 4);
+        // Six models at most: each overloaded one costs time, and the webhook is not waiting for this any more.
+        const candidates = [...new Set(ordered)].slice(0, 6);
         console.log(`Gemini models in order: ${candidates.join(', ')}`);
         return candidates;
     } catch (err) {
