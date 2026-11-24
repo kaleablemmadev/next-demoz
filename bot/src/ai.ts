@@ -97,19 +97,28 @@ export async function askJson<T>(opts: {
     try {
         const model = await activeModel();
         if (!model) return null;
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        const payload = JSON.stringify({
+            systemInstruction: { parts: [{ text: opts.system }] },
+            contents: [{ role: 'user', parts: [{ text: redact(opts.prompt) }] }],
+            generationConfig: { responseMimeType: 'application/json', temperature: 0.2 },
+        });
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+        // Gemini returns 503 (high demand) and 429 (rate limit) briefly. One retry after a short wait.
+        let res = await fetch(url, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'x-goog-api-key': API_KEY,
-            },
-            body: JSON.stringify({
-                systemInstruction: { parts: [{ text: opts.system }] },
-                contents: [{ role: 'user', parts: [{ text: redact(opts.prompt) }] }],
-                generationConfig: { responseMimeType: 'application/json', temperature: 0.2 },
-            }),
+            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': API_KEY },
+            body: payload,
             signal: AbortSignal.timeout(TIMEOUT_MS),
         });
+        if (res.status === 503 || res.status === 429) {
+            await new Promise((r) => setTimeout(r, 2000));
+            res = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'x-goog-api-key': API_KEY },
+                body: payload,
+                signal: AbortSignal.timeout(TIMEOUT_MS),
+            });
+        }
         if (!res.ok) {
             console.error(`Gemini returned ${res.status}: ${(await res.text()).slice(0, 300)}`);
             return null;
