@@ -39,6 +39,7 @@ export const AGENCY_COMMANDS = [
 export const PARENT_COMMANDS = [
     { command: 'start', description: 'Open the parent menu' },
     { command: 'post', description: 'Request a tutor for your child' },
+    { command: 'describe', description: 'Describe the tutor you need in your own words' },
     { command: 'myrequests', description: 'See the status of your requests' },
     { command: 'cancel', description: 'Cancel the current request form' },
     { command: 'menu', description: 'Show the parent menu' },
@@ -63,6 +64,7 @@ export const AGENCY_HELP =
 export const PARENT_HELP =
     'NextTutor parent functions\n\n' +
     '/post - Request a tutor for your child. You will provide the grade, area, sessions per week, budget and contact details.\n' +
+    '/describe - Describe the tutor you need in your own words, then confirm the filled form.\n' +
     '/myrequests - See the status of your requests.\n' +
     '/cancel - Cancel the current request form.\n' +
     '/menu - Show the parent menu.\n' +

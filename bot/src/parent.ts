@@ -6,6 +6,7 @@ import { pool } from './db.js';
 import { recordAuditEvent, withTransaction } from './audit.js';
 import { KNOWN_SUB_CITIES } from '../../shared/rules/nearby-areas.js';
 import { GRADES } from './curriculum.js';
+import { describeAvailable, extractParentFields, type ParentFields } from './parent-describe.js';
 
 type Step =
     | 'contact' | 'grade' | 'area' | 'location' | 'weak'
@@ -28,12 +29,63 @@ type Draft = {
 
 // In-memory drafts. If the bot restarts mid-form, the parent sends /post again.
 const drafts = new Map<number, Draft>();
+// Parents who sent /describe and will type their request next.
+const describing = new Set<number>();
 
 const ADMIN_ID = Number(process.env.ADMIN_TELEGRAM_ID);
 const SESSIONS = [2, 3, 4, 5] as const;
 const GENDERS = ['ANY', 'MALE', 'FEMALE'] as const;
 
 // Creates or updates the Parent row for this Telegram user and returns its id.
+// Fills a parent request from the parent's description. Answers at once; the AI runs in the background.
+async function describeRequest(ctx: Context, text: string) {
+    await ctx.reply('Reading your request. This can take up to half a minute.');
+    void fillFromDescription(ctx, text).catch(async (err) => {
+        console.error('Parent describe failed:', err);
+        await ctx.reply('Something went wrong while reading your request. Please send /post to fill the form.').catch(() => undefined);
+    });
+}
+
+async function fillFromDescription(ctx: Context, text: string) {
+    const parent = await ensureParent(ctx);
+    const fields: ParentFields | null = await extractParentFields(text, `parent:${parent.id}`);
+    if (!fields) {
+        return ctx.reply('I could not read that request. Please send /post to fill the form step by step.');
+    }
+
+    // First required step still missing, in the order the form asks.
+    const missing: Step | null =
+        !parent.contactHandle ? 'contact'
+        : !fields.gradeLevel ? 'grade'
+        : !fields.subCity ? 'area'
+        : !fields.sessionsPerWeek ? 'sessions'
+        : !fields.budgetEtb ? 'budget'
+        : null;
+
+    const d: Draft = {
+        id: randomUUID(),
+        parentId: parent.id,
+        contactHandle: parent.contactHandle,
+        step: missing ?? 'confirm',
+        gradeLevel: fields.gradeLevel ?? undefined,
+        subCity: fields.subCity ?? undefined,
+        locationDetail: fields.locationDetail,
+        weakSubjects: fields.weakSubjects,
+        sessionsPerWeek: fields.sessionsPerWeek ?? undefined,
+        budgetEtb: fields.budgetEtb ?? undefined,
+        preferredTutorGender: fields.preferredTutorGender,
+        notes: fields.notes,
+    };
+    drafts.set(ctx.from!.id, d);
+
+    await ctx.reply(
+        missing
+            ? 'I filled in what I could from your description. I still need a few details.'
+            : 'I filled in your request from your description. Please check it before it is sent.'
+    );
+    await ask(ctx, d);
+}
+
 export async function ensureParent(ctx: Context): Promise<{ id: string; contactHandle: string | null }> {
     const username = ctx.from?.username ?? null;
     const telegramId = ctx.from!.id;
@@ -162,6 +214,17 @@ export function registerParentHandlers(bot: Bot) {
         };
         drafts.set(ctx.from!.id, d);
         await ask(ctx, d);
+    });
+
+    // Plain-language request: the parent describes what they need, the AI fills the form, the parent confirms.
+    bot.command('describe', async (ctx) => {
+        if (!describeAvailable()) return ctx.reply('Describing a request is not switched on yet. Send /post to fill the form.');
+        await ensureParent(ctx);
+        describing.add(ctx.from!.id);
+        return ctx.reply(
+            'Describe the tutor you need in your own words. Include the child\'s grade, the subject, the sub-city, ' +
+            'how many sessions a week, and your monthly budget. I will fill the form and you confirm it before it is sent.'
+        );
     });
 
     bot.command('cancel', async (ctx) => {
@@ -308,6 +371,10 @@ export function registerParentHandlers(bot: Bot) {
 
     // Typed answers. Any command ends the request in progress.
     bot.on('message:text', async (ctx, next) => {
+        if (describing.has(ctx.from.id) && !ctx.message.text.startsWith('/')) {
+            describing.delete(ctx.from.id);
+            return describeRequest(ctx, ctx.message.text.trim());
+        }
         const d = drafts.get(ctx.from.id);
         if (!d) return next();
 
