@@ -4,7 +4,7 @@
 //
 // Settings (Render environment variables):
 //   GEMINI_API_KEY   required to switch the AI on
-//   GEMINI_MODEL     optional, a model name the key can use; otherwise the bot picks one from the key's list
+//   GEMINI_MODEL     optional, a model name the key can use; it is tried first
 //   AI_DAILY_LIMIT   optional, requests per person per day, defaults to 30
 
 const API_KEY = process.env.GEMINI_API_KEY?.trim() || '';
@@ -46,10 +46,10 @@ export function redact(text: string): string {
         .replace(/(\+?\d[\d\s-]{7,}\d)/g, '[phone]');
 }
 
-// The model is looked up once from Gemini's list for this key, so a retired or renamed model does not break the bot.
-let modelCache: Promise<string | null> | null = null;
+// Models this key can use, in the order to try them. Looked up once from Gemini.
+let modelCache: Promise<string[]> | null = null;
 
-async function chooseModel(): Promise<string | null> {
+async function chooseModels(): Promise<string[]> {
     const wanted = process.env.GEMINI_MODEL?.trim();
     try {
         const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', {
@@ -58,7 +58,7 @@ async function chooseModel(): Promise<string | null> {
         });
         if (!res.ok) {
             console.error(`Gemini model list returned ${res.status}: ${(await res.text()).slice(0, 300)}`);
-            return null;
+            return [];
         }
         const body = (await res.json()) as { models?: { name: string; supportedGenerationMethods?: string[] }[] };
         const usable = (body.models ?? [])
@@ -66,24 +66,32 @@ async function chooseModel(): Promise<string | null> {
             .map((m) => m.name.replace(/^models\//, ''));
         if (usable.length === 0) {
             console.error('This Gemini key has no models that support generateContent');
-            return null;
+            return [];
         }
-        if (wanted && usable.includes(wanted)) return wanted;
-        // Prefer stable flash models (highest version first), then any flash model, then anything usable.
+        // GEMINI_MODEL first if usable; then stable flash models (newest first); then other flash; then the rest.
         const stableFlash = usable.filter((m) => /^gemini-[\d.]+-flash$/.test(m)).sort().reverse();
-        const chosen = stableFlash[0] ?? usable.find((m) => m.includes('flash')) ?? usable[0];
-        console.log(`Gemini model in use: ${chosen}`);
-        return chosen;
+        const otherFlash = usable.filter((m) => m.includes('flash') && !stableFlash.includes(m));
+        const ordered = [
+            ...(wanted && usable.includes(wanted) ? [wanted] : []),
+            ...stableFlash,
+            ...otherFlash,
+            ...usable,
+        ];
+        const candidates = [...new Set(ordered)].slice(0, 4);
+        console.log(`Gemini models in order: ${candidates.join(', ')}`);
+        return candidates;
     } catch (err) {
         console.error('Could not list Gemini models:', err);
-        return null;
+        return [];
     }
 }
 
-function activeModel(): Promise<string | null> {
-    if (!modelCache) modelCache = chooseModel();
+function activeModels(): Promise<string[]> {
+    if (!modelCache) modelCache = chooseModels();
     return modelCache;
 }
+
+const OVERLOADED = new Set([404, 429, 503]);
 
 // Asks Gemini for JSON that matches the instructions. Returns null on any failure.
 export async function askJson<T>(opts: {
@@ -95,32 +103,32 @@ export async function askJson<T>(opts: {
     if (!withinDailyLimit(opts.userKey)) return null;
 
     try {
-        const model = await activeModel();
-        if (!model) return null;
+        const models = await activeModels();
+        if (models.length === 0) return null;
+
         const payload = JSON.stringify({
             systemInstruction: { parts: [{ text: opts.system }] },
             contents: [{ role: 'user', parts: [{ text: redact(opts.prompt) }] }],
             generationConfig: { responseMimeType: 'application/json', temperature: 0.2 },
         });
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-        // Gemini returns 503 (high demand) and 429 (rate limit) briefly. One retry after a short wait.
-        let res = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': API_KEY },
-            body: payload,
-            signal: AbortSignal.timeout(TIMEOUT_MS),
-        });
-        if (res.status === 503 || res.status === 429) {
-            await new Promise((r) => setTimeout(r, 2000));
-            res = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'x-goog-api-key': API_KEY },
-                body: payload,
-                signal: AbortSignal.timeout(TIMEOUT_MS),
-            });
+        const headers = { 'Content-Type': 'application/json', 'x-goog-api-key': API_KEY };
+
+        // Each model is tried in order. An overloaded, rate-limited or missing model is retried once, then the next one is tried.
+        let res: Response | null = null;
+        for (const model of models) {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+            res = await fetch(url, { method: 'POST', headers, body: payload, signal: AbortSignal.timeout(TIMEOUT_MS) });
+            if (res.status === 503 || res.status === 429) {
+                await new Promise((r) => setTimeout(r, 2000));
+                res = await fetch(url, { method: 'POST', headers, body: payload, signal: AbortSignal.timeout(TIMEOUT_MS) });
+            }
+            if (res.ok || !OVERLOADED.has(res.status)) break;
+            console.error(`Gemini model ${model} returned ${res.status}, trying the next model`);
         }
-        if (!res.ok) {
-            console.error(`Gemini returned ${res.status}: ${(await res.text()).slice(0, 300)}`);
+
+        if (!res || !res.ok) {
+            const detail = res ? (await res.text()).slice(0, 300) : 'no response';
+            console.error(`Gemini returned ${res?.status ?? 'nothing'}: ${detail}`);
             return null;
         }
         const body = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
