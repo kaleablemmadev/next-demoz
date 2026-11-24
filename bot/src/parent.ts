@@ -4,7 +4,7 @@ import { Bot, InlineKeyboard, type Context } from 'grammy';
 import { randomUUID } from 'node:crypto';
 import { pool } from './db.js';
 import { recordAuditEvent, withTransaction } from './audit.js';
-import { KNOWN_SUB_CITIES } from '../../shared/rules/nearby-areas.js';
+import { KNOWN_SUB_CITIES, normalizeSubCity } from '../../shared/rules/nearby-areas.js';
 import { GRADES } from './curriculum.js';
 import { describeAvailable, extractParentFields, type ParentFields } from './parent-describe.js';
 
@@ -17,7 +17,8 @@ type Draft = {
     parentId: string;
     contactHandle: string | null;
     step: Step;
-    gradeLevel?: string;
+    // One entry per child. Each grade becomes its own request with the same details.
+    gradeLevels: string[];
     subCity?: string;
     locationDetail?: string | null;
     weakSubjects?: string | null;
@@ -46,6 +47,28 @@ async function describeRequest(ctx: Context, text: string) {
     });
 }
 
+// Sefer names are compared without the Amharic part, the word "sefer" and punctuation: "Wessen sefer" matches "Wessen (ወሰን)".
+function seferKey(name: string): string {
+    return name
+        .toLowerCase()
+        .replace(/\(.*?\)/g, ' ')
+        .replace(/\bsefers?\b/g, ' ')
+        .replace(/[^a-z0-9ሀ-፿ ]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+// Returns the sub-city of an approved sefer with this name, or null when no approved sefer matches.
+async function subCityForSefer(typed: string): Promise<string | null> {
+    const key = seferKey(typed);
+    if (!key) return null;
+    const { rows } = await pool.query<{ name: string; subCity: string }>(
+        `SELECT name, "subCity" FROM "Sefer" WHERE status = 'APPROVED' AND "subCity" IS NOT NULL`,
+    );
+    const hit = rows.find((r) => seferKey(r.name) === key);
+    return hit ? normalizeSubCity(hit.subCity) : null;
+}
+
 async function fillFromDescription(ctx: Context, text: string) {
     const parent = await ensureParent(ctx);
     const fields: ParentFields | null = await extractParentFields(text, `parent:${parent.id}`);
@@ -53,11 +76,14 @@ async function fillFromDescription(ctx: Context, text: string) {
         return ctx.reply('I could not read that request. Please send /post to fill the form step by step.');
     }
 
+    // The sefer decides the sub-city. The sub-city the parent named is only used when the sefer is unknown.
+    const subCity = (fields.sefer ? await subCityForSefer(fields.sefer) : null) ?? fields.subCity;
+
     // First required step still missing, in the order the form asks.
     const missing: Step | null =
         !parent.contactHandle ? 'contact'
-        : !fields.gradeLevel ? 'grade'
-        : !fields.subCity ? 'area'
+        : fields.gradeLevels.length === 0 ? 'grade'
+        : !subCity ? 'area'
         : !fields.sessionsPerWeek ? 'sessions'
         : !fields.budgetEtb ? 'budget'
         : null;
@@ -67,8 +93,8 @@ async function fillFromDescription(ctx: Context, text: string) {
         parentId: parent.id,
         contactHandle: parent.contactHandle,
         step: missing ?? 'confirm',
-        gradeLevel: fields.gradeLevel ?? undefined,
-        subCity: fields.subCity ?? undefined,
+        gradeLevels: fields.gradeLevels,
+        subCity: subCity ?? undefined,
         locationDetail: fields.locationDetail,
         weakSubjects: fields.weakSubjects,
         sessionsPerWeek: fields.sessionsPerWeek ?? undefined,
@@ -189,13 +215,15 @@ function choices(prefix: string, options: [string, string][], sessionId: string,
 
 function summary(d: Draft): string[] {
     const gender = d.preferredTutorGender === 'MALE' ? 'Male' : d.preferredTutorGender === 'FEMALE' ? 'Female' : 'Any';
+    const children = d.gradeLevels.length;
     return [
-        `Grade: ${d.gradeLevel}`,
+        children > 1 ? `Children: ${children}, one request for each` : null,
+        `${children > 1 ? 'Grades' : 'Grade'}: ${d.gradeLevels.join(', ')}`,
         `Area: ${d.subCity}`,
         d.locationDetail ? `Location: ${d.locationDetail}` : null,
         `Subjects needed: ${d.weakSubjects ?? 'Not specified'}`,
         `Sessions: ${d.sessionsPerWeek} per week`,
-        `Budget: ${d.budgetEtb?.toLocaleString()} ETB per month`,
+        `Budget: ${d.budgetEtb?.toLocaleString()} ETB per month${children > 1 ? ' for each child' : ''}`,
         `Tutor gender: ${gender}`,
         d.notes ? `Notes: ${d.notes}` : null,
         '',
@@ -211,6 +239,7 @@ export function registerParentHandlers(bot: Bot) {
             parentId: parent.id,
             contactHandle: parent.contactHandle,
             step: parent.contactHandle ? 'grade' : 'contact',
+            gradeLevels: [],
         };
         drafts.set(ctx.from!.id, d);
         await ask(ctx, d);
@@ -222,8 +251,9 @@ export function registerParentHandlers(bot: Bot) {
         await ensureParent(ctx);
         describing.add(ctx.from!.id);
         return ctx.reply(
-            'Describe the tutor you need in your own words. Include the child\'s grade, the subject, the sub-city, ' +
-            'how many sessions a week, and your monthly budget. I will fill the form and you confirm it before it is sent.'
+            'Describe the tutor you need in your own words. Include each child\'s grade, the subject, your sefer or sub-city, ' +
+            'how many sessions a week, the session length, the budget per child, and any language or gender needs. ' +
+            'I will fill the form and you confirm it before it is sent.'
         );
     });
 
@@ -245,7 +275,7 @@ export function registerParentHandlers(bot: Bot) {
         const expectedStep = field === 'g' ? 'grade' : field === 'a' ? 'area' : field === 'n' ? 'sessions' : 'gender';
         if (d.step !== expectedStep) { await ctx.answerCallbackQuery({ text: 'This step has expired.' }); return; }
         if (field === 'g') {
-            d.gradeLevel = value;
+            d.gradeLevels = [value];
             d.step = 'area';
         } else if (field === 'a') {
             d.subCity = value;
@@ -316,33 +346,36 @@ export function registerParentHandlers(bot: Bot) {
                     );
                 }
 
-                const { rows: requests } = await client.query<{ id: string }>(
-                    `INSERT INTO "ParentRequest"
-                     (id, "parentId", "createdBy", "gradeLevel", "subCity", "locationDetail",
-                      "weakSubjects", "sessionsPerWeek", "budgetEtb", "preferredTutorGender", notes, status, "createdAt")
-                     VALUES (gen_random_uuid()::text, $1, 'PARENT', $2, $3, $4, $5, $6, $7, $8, $9, 'OPEN', now())
-                     RETURNING id`,
-                    [
-                        d.parentId,
-                        d.gradeLevel,
-                        d.subCity,
-                        d.locationDetail ?? null,
-                        d.weakSubjects ?? null,
-                        d.sessionsPerWeek,
-                        d.budgetEtb,
-                        d.preferredTutorGender ?? null,
-                        d.notes ?? null,
-                    ],
-                );
+                // One request per child, each with the same subjects, sessions, budget per child and notes.
+                for (const gradeLevel of d.gradeLevels) {
+                    const { rows: requests } = await client.query<{ id: string }>(
+                        `INSERT INTO "ParentRequest"
+                         (id, "parentId", "createdBy", "gradeLevel", "subCity", "locationDetail",
+                          "weakSubjects", "sessionsPerWeek", "budgetEtb", "preferredTutorGender", notes, status, "createdAt")
+                         VALUES (gen_random_uuid()::text, $1, 'PARENT', $2, $3, $4, $5, $6, $7, $8, $9, 'OPEN', now())
+                         RETURNING id`,
+                        [
+                            d.parentId,
+                            gradeLevel,
+                            d.subCity,
+                            d.locationDetail ?? null,
+                            d.weakSubjects ?? null,
+                            d.sessionsPerWeek,
+                            d.budgetEtb,
+                            d.preferredTutorGender ?? null,
+                            d.notes ?? null,
+                        ],
+                    );
 
-                if (requests[0]) {
-                    await recordAuditEvent(client, {
-                        actorRef: parentRows[0].auditRef,
-                        actorType: 'PARENT',
-                        action: 'REQUEST_CREATED',
-                        entityType: 'PARENT_REQUEST',
-                        entityRef: requests[0].id,
-                    });
+                    if (requests[0]) {
+                        await recordAuditEvent(client, {
+                            actorRef: parentRows[0].auditRef,
+                            actorType: 'PARENT',
+                            action: 'REQUEST_CREATED',
+                            entityType: 'PARENT_REQUEST',
+                            entityRef: requests[0].id,
+                        });
+                    }
                 }
             });
         } catch (err) {

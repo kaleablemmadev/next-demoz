@@ -7,7 +7,8 @@ import { GRADES } from './curriculum.js';
 import { normalizeSubCity } from '../../shared/rules/nearby-areas.js';
 
 export type ParentFields = {
-    gradeLevel: string | null;
+    gradeLevels: string[];
+    sefer: string | null;
     subCity: string | null;
     locationDetail: string | null;
     weakSubjects: string | null;
@@ -20,14 +21,15 @@ export type ParentFields = {
 export const describeAvailable = aiEnabled;
 
 const SYSTEM = `A parent in Ethiopia describes the tutor their child needs. Extract the request into JSON with these keys:
-- gradeLevel: one value from this list, or null: ${GRADES.join(', ')}.
-- subCity: one Addis Ababa sub-city name in English, or null.
+- gradeLevels: array with one value per child from this list: ${GRADES.join(', ')}. If the parent has two children in grade 8 and grade 10, return ["Grade 8", "Grade 10"]. Empty array if not said.
+- sefer: the sefer (neighbourhood) name the parent wrote, as written, or null.
+- subCity: one Addis Ababa sub-city name in English only if the parent named one, otherwise null.
 - locationDetail: a short place or landmark the parent mentioned, or null.
 - weakSubjects: the subjects the child needs help with, comma separated, or null.
 - sessionsPerWeek: whole number 2 to 5, or null.
-- budgetEtb: the monthly budget in birr as a number, or null.
+- budgetEtb: the monthly budget in birr for EACH child as a number, or null. If the parent gives one amount per child, use that amount.
 - preferredTutorGender: "MALE" or "FEMALE" if the parent asked for one, otherwise null.
-- notes: anything else the agency should know, short, or null.
+- notes: short text for the agency. Include the session length if stated (for example "1 hour per session", "1.5 hours per session") and any language or other requirement (for example "must speak English, knows Afaan Oromo"). Otherwise null.
 Rules: use null when the text does not say. Never guess. Never include phone numbers, usernames or links. Do not suggest tutors or agencies.`;
 
 function clean(text: unknown, max: number): string | null {
@@ -45,16 +47,18 @@ export async function extractParentFields(text: string, userKey: string): Promis
     });
     if (!raw || typeof raw !== 'object') return null;
 
-    const gradeLevel = typeof raw.gradeLevel === 'string' && (GRADES as readonly string[]).includes(raw.gradeLevel)
-        ? raw.gradeLevel
-        : null;
+    const gradeLevels = Array.isArray(raw.gradeLevels)
+        ? [...new Set(raw.gradeLevels.filter((g): g is string => typeof g === 'string' && (GRADES as readonly string[]).includes(g)))]
+        : [];
+    const sefer = clean(raw.sefer, 60);
     const subCityRaw = clean(raw.subCity, 60);
     const subCity = subCityRaw ? normalizeSubCity(subCityRaw) : null;
     const sessions = Number(raw.sessionsPerWeek);
     const budget = Number(raw.budgetEtb);
 
     const fields: ParentFields = {
-        gradeLevel,
+        gradeLevels,
+        sefer,
         subCity,
         locationDetail: clean(raw.locationDetail, 40),
         weakSubjects: clean(raw.weakSubjects, 200),
@@ -65,6 +69,6 @@ export async function extractParentFields(text: string, userKey: string): Promis
             : null,
         notes: clean(raw.notes, 300),
     };
-    const anything = fields.gradeLevel || fields.subCity || fields.sessionsPerWeek || fields.budgetEtb;
+    const anything = fields.gradeLevels.length || fields.sefer || fields.subCity || fields.sessionsPerWeek || fields.budgetEtb;
     return anything ? fields : null;
 }
