@@ -254,6 +254,15 @@ function privateReply(api: Api, chatId: number): Reply {
 
 // Fills a new draft from a pasted offer, then asks only for what is still missing.
 async function handleQuickPaste(ctx: Context, text: string) {
+    // Answer Telegram at once. The AI can take longer than Telegram's wait, so the form is filled in the background.
+    await ctx.reply('Reading your offer. This can take up to half a minute.');
+    void quickPasteFill(ctx, text).catch(async (err) => {
+        console.error('Quick post failed:', err);
+        await ctx.reply('Something went wrong while reading the offer. Please send /new to fill the form.').catch(() => undefined);
+    });
+}
+
+async function quickPasteFill(ctx: Context, text: string) {
     const from = ctx.from!;
     const agency = await findAgency(from.id, from.username);
     if (!agency) return ctx.reply('This account is not registered as an agency.');
